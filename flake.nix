@@ -159,6 +159,7 @@
         server-firewall = ./modules/nixos/server/firewall.nix;
         server-fail2ban = ./modules/nixos/server/fail2ban.nix;
         server-tuning = ./modules/nixos/server/tuning.nix;
+        sops-age-key = ./modules/nixos/secrets/sops-age-key.nix;
         vpn-wireguard = ./modules/nixos/vpn/wireguard.nix;
         proxy-xray = ./modules/shared/proxy/xray.nix;
         proxy-hy2 = ./modules/shared/proxy/hy2.nix;

@@ -1,6 +1,7 @@
 {...}: {
   imports = [
     ../../shared/server/base.nix
+    ../secrets/sops-age-key.nix
     ../server/ssh.nix
     ../server/firewall.nix
     ../server/fail2ban.nix
