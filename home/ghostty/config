@@ -1,0 +1,42 @@
+# Ghostty configuration
+# https://ghostty.org/docs/config
+
+font-family = "RecMonoDuotone Nerd Font Mono"
+font-size = 16
+font-thicken = true
+font-thicken-strength=1
+adjust-cell-height=1
+
+# Atom One Dark/Atom One Light
+# Dark Modern
+# Dracula+
+# Monokai Pro/Monokai Pro Light Sun
+# theme = dark:Dark Modern,light:Atom One Light
+theme = Atom One Dark
+
+window-padding-x = 5
+window-padding-y = 0
+window-padding-balance = true
+click-repeat-interval = 500
+confirm-close-surface = false
+window-save-state = always
+window-decoration = false
+working-directory = home
+mouse-hide-while-typing = false
+bell-features = "no-attention,no-audio,no-system,no-title,no-border"
+
+macos-non-native-fullscreen=padded-notch
+macos-non-native-fullscreen = true
+macos-option-as-alt = left
+macos-window-shadow = false
+window-colorspace = display-p3
+macos-titlebar-style = hidden
+
+auto-update = off
+
+# tmux integration - send save-buffer command
+keybind = cmd+s=text:\x01\x73
+# tmux prefix to toggle zoom on current pane
+keybind = cmd+b=text:\x01\x7a
+
+config-file = ?config.local

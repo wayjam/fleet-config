@@ -1,0 +1,94 @@
+set positional-arguments := true
+
+default:
+  @just --list
+
+fmt:
+  nix run .#fleet -- fmt
+
+check:
+  nix run .#fleet -- check
+
+eval:
+  nix run .#fleet -- eval
+
+build host:
+  nix run .#fleet -- build {{host}}
+
+deploy target:
+  nix run .#fleet -- deploy {{target}}
+
+deploy-all:
+  nix run .#fleet -- deploy-all
+
+install host ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}}
+
+install-port host port ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}} --port {{port}}
+
+install-kexec-syscall host ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}} --kexec-syscall
+
+install-port-kexec-syscall host port ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}} --port {{port}} --kexec-syscall
+
+image host:
+  nix run .#fleet -- image build {{host}}
+
+image-remote host builder="":
+  if [ -n "{{builder}}" ]; then nix run .#fleet -- image remote {{host}} --builder {{builder}}; else nix run .#fleet -- image remote {{host}}; fi
+
+image-remote-no-kvm host builder="":
+  if [ -n "{{builder}}" ]; then nix run .#fleet -- image remote {{host}} --builder {{builder}} --no-kvm; else nix run .#fleet -- image remote {{host}} --no-kvm; fi
+
+image-download host builder="" output="main.raw":
+  if [ -n "{{builder}}" ]; then nix run .#fleet -- image download {{host}} --builder {{builder}} --output {{output}}; else nix run .#fleet -- image download {{host}} --output {{output}}; fi
+
+builder-ping builder="":
+  if [ -n "{{builder}}" ]; then nix run .#fleet -- builder ping {{builder}}; else nix run .#fleet -- builder ping; fi
+
+builder-dry-run host builder="":
+  if [ -n "{{builder}}" ]; then nix run .#fleet -- builder dry-run {{host}} --builder {{builder}}; else nix run .#fleet -- builder dry-run {{host}}; fi
+
+ports-tcp host:
+  nix run .#fleet -- ports tcp {{host}}
+
+ports-udp host:
+  nix run .#fleet -- ports udp {{host}}
+
+lxc-switch host:
+  nix run .#fleet -- lxc switch {{host}}
+
+secret-uuid:
+  nix run .#fleet -- secret uuid
+
+secret-password length="32" mode="plain":
+  nix run .#fleet -- secret password --length {{length}} --mode {{mode}}
+
+secret-hex bytes="32":
+  nix run .#fleet -- secret hex --bytes {{bytes}}
+
+secret-xray-shortid bytes="8":
+  nix run .#fleet -- secret xray-shortid --bytes {{bytes}}
+
+secret-xray-reality:
+  nix run .#fleet -- secret xray-reality
+
+secret-age:
+  nix run .#fleet -- secret age
+
+secret-age-file name:
+  nix run .#fleet -- secret age-file {{name}}
+
+secret-wireguard:
+  nix run .#fleet -- secret wireguard
+
+secret-ssh name comment="operator@example.invalid":
+  nix run .#fleet -- secret ssh {{name}} --comment {{comment}}
+
+secret-proxy:
+  nix run .#fleet -- secret proxy
+
+update-justfile:
+  nix run .#fleet -- justfile render --output Justfile

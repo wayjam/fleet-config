@@ -1,0 +1,751 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    print("error: Python 3.11+ is required for tomllib", file=sys.stderr)
+    sys.exit(127)
+
+
+DEFAULT_CONFIG = {
+    "paths": {
+        "ssh_config": "local/ssh-config",
+        "remote_root": "/root",
+        "secret_key_dir": "local/keys",
+        "node_age_key": "local/node-age.txt",
+    },
+    "builder": {
+        "default": "",
+        "ssh_key": "-",
+        "memory": 768,
+        "use_kvm": True,
+        "remote_nix": "auto",
+    },
+    "builders": {},
+    "repos": {
+        "public_name": "fleet-config",
+        "inventory_name": "fleet-inventory",
+    },
+}
+
+
+NIX_PROBE = (
+    "if command -v nix >/dev/null 2>&1; then "
+    "command -v nix; "
+    "elif [ -x /nix/var/nix/profiles/default/bin/nix ]; then "
+    "printf %s /nix/var/nix/profiles/default/bin/nix; "
+    "elif [ -x /root/.nix-profile/bin/nix ]; then "
+    "printf %s /root/.nix-profile/bin/nix; "
+    "elif [ -x /run/current-system/sw/bin/nix ]; then "
+    "printf %s /run/current-system/sw/bin/nix; "
+    "else exit 127; fi"
+)
+
+
+def deep_merge(base, override):
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_toml(path):
+    if not path.exists():
+        return {}
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def repo_root():
+    return Path.cwd()
+
+
+def load_config():
+    root = repo_root()
+    config = DEFAULT_CONFIG
+    config = deep_merge(config, load_toml(root / "fleet.toml"))
+    config = deep_merge(config, load_toml(root / "local" / "fleet.toml"))
+    return config
+
+
+def repo_path(value):
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return repo_root() / path
+
+
+def remote_repo_path(config, value, builder):
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        try:
+            rel = path.relative_to(repo_root())
+        except ValueError:
+            return str(path)
+    else:
+        rel = path
+    repos = config.get("repos", {})
+    inventory_name = repos.get("inventory_name", "fleet-inventory")
+    return str(Path(builder["remote_root"]) / inventory_name / rel)
+
+
+def run(argv, *, env=None, cwd=None):
+    printable = " ".join(shlex.quote(str(a)) for a in argv)
+    print(f"+ {printable}", file=sys.stderr)
+    subprocess.run([str(a) for a in argv], env=env, cwd=cwd, check=True)
+
+
+def die(message, code=2):
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def reject_scp_port(value):
+    if value and "@" in value and ":" in value.rsplit("@", 1)[1]:
+        die(
+            "builder addresses must not use scp-style user@host:port; "
+            "use --port or fleet.toml port instead"
+        )
+
+
+def split_user_host(value):
+    reject_scp_port(value)
+    if "@" in value:
+        user, host = value.split("@", 1)
+        if not user or not host:
+            die(f"invalid builder address: {value}")
+        return user, host
+    return None, value
+
+
+def builder_config(config, name_or_host=None):
+    default_name = str(config.get("builder", {}).get("default", "") or "")
+    name = name_or_host or default_name
+    if not name:
+        die("missing builder; pass one or set [builder].default in fleet.toml")
+
+    reject_scp_port(name)
+    named = dict(config.get("builders", {}).get(name, {}))
+    global_builder = config.get("builder", {})
+    paths = config.get("paths", {})
+
+    user_from_arg, host_from_arg = split_user_host(name)
+    host = named.get("host") or host_from_arg
+    user = named.get("user") or user_from_arg
+    port = named.get("port")
+    ssh_key = named.get("ssh_key", global_builder.get("ssh_key", "-"))
+    ssh_config = named.get("ssh_config", paths.get("ssh_config", "local/ssh-config"))
+    remote_root = named.get("remote_root", paths.get("remote_root", "/root"))
+    remote_nix = named.get("remote_nix", global_builder.get("remote_nix", "auto"))
+    memory = int(named.get("memory", global_builder.get("memory", 768)))
+    use_kvm = parse_bool(named.get("use_kvm", global_builder.get("use_kvm", True)))
+
+    use_generated_alias = bool(named or user or port or (ssh_key and ssh_key != "-"))
+
+    return {
+        "name": name,
+        "alias": ("fleet-builder-" + "".join(c if c.isalnum() else "-" for c in name)) if use_generated_alias else name,
+        "use_generated_alias": use_generated_alias,
+        "host": host,
+        "user": user,
+        "port": port,
+        "ssh_key": ssh_key,
+        "ssh_config": ssh_config,
+        "remote_root": str(remote_root),
+        "remote_nix": str(remote_nix),
+        "memory": memory,
+        "use_kvm": use_kvm,
+    }
+
+
+def apply_builder_overrides(builder, args):
+    for attr in ("port", "ssh_key", "ssh_config", "remote_root", "remote_nix", "memory"):
+        value = getattr(args, attr, None)
+        if value is not None:
+            builder[attr] = value
+    if getattr(args, "kvm", None) is True:
+        builder["use_kvm"] = True
+    if getattr(args, "no_kvm", None) is True:
+        builder["use_kvm"] = False
+    return builder
+
+
+def generated_ssh_config(builder):
+    if not builder.get("use_generated_alias"):
+        configured = builder.get("ssh_config")
+        if configured:
+            configured_path = repo_path(configured)
+            if configured_path.exists():
+                return configured_path
+        return None
+
+    configured = builder.get("ssh_config")
+
+    temp = tempfile.NamedTemporaryFile("w", delete=False, prefix="fleet-ssh-", suffix=".config")
+    with temp:
+        if configured:
+            configured_path = repo_path(configured)
+            if configured_path.exists():
+                temp.write("Include {}\n\n".format(configured_path))
+        temp.write("Host {}\n".format(builder["alias"]))
+        temp.write("  HostName {}\n".format(builder["host"]))
+        if builder.get("user"):
+            temp.write("  User {}\n".format(builder["user"]))
+        if builder.get("port"):
+            temp.write("  Port {}\n".format(builder["port"]))
+        if builder.get("ssh_key") and builder["ssh_key"] != "-":
+            temp.write("  IdentityFile {}\n".format(Path(builder["ssh_key"]).expanduser()))
+        temp.write("  IdentitiesOnly no\n")
+    return Path(temp.name)
+
+
+def ssh_args(builder):
+    args = ["ssh"]
+    config_file = generated_ssh_config(builder)
+    if config_file:
+        args.extend(["-F", str(config_file)])
+    args.append(builder["alias"])
+    return args
+
+
+def scp_args(builder):
+    args = ["scp"]
+    config_file = generated_ssh_config(builder)
+    if config_file:
+        args.extend(["-F", str(config_file)])
+    return args
+
+
+def nix_ssh_env(builder):
+    env = os.environ.copy()
+    config_file = generated_ssh_config(builder)
+    if config_file:
+        env["NIX_SSHOPTS"] = " ".join(shlex.quote(part) for part in ["-F", str(config_file)])
+    return env
+
+
+def builder_ssh_url(builder):
+    return f"ssh-ng://{builder['alias']}"
+
+
+def builder_spec(builder, *, require_kvm=True):
+    features = "kvm" if require_kvm else "-"
+    return f"{builder_ssh_url(builder)} x86_64-linux {builder['ssh_key']} 1 1 {features} -"
+
+
+def remote_shell(builder, script):
+    run([*ssh_args(builder), "set -eu; " + script])
+
+
+def remote_nix_expr(builder):
+    if builder["remote_nix"] == "auto":
+        return f"$({NIX_PROBE})"
+    return shlex.quote(builder["remote_nix"])
+
+
+def colmena_cmd():
+    return ["nix", "run", ".#colmena", "--", "--impure", "--config", "flake.nix"]
+
+
+def nixos_anywhere_cmd():
+    return ["nix", "run", ".#nixos-anywhere", "--"]
+
+
+def secret_gen_cmd():
+    return ["nix", "run", ".#secret-gen", "--"]
+
+
+def cmd_fmt(_args, _config):
+    run(["nix", "fmt"])
+
+
+def cmd_check(_args, _config):
+    run(["nix", "flake", "check", "--show-trace"])
+
+
+def cmd_eval(_args, _config):
+    run([*colmena_cmd(), "eval", "-E", "{ nodes, ... }: builtins.attrNames nodes"])
+
+
+def cmd_build(args, _config):
+    run([*colmena_cmd(), "build", "--on", args.host])
+
+
+def cmd_deploy(args, _config):
+    run([*colmena_cmd(), "apply", "--on", args.target])
+
+
+def cmd_deploy_all(_args, _config):
+    run([*colmena_cmd(), "apply"])
+
+
+def cmd_install(args, _config):
+    cmd = nixos_anywhere_cmd()
+    if args.port:
+        cmd.extend(["--ssh-option", f"Port={args.port}"])
+    if args.kexec_syscall:
+        cmd.extend(["--kexec-extra-flags", "--kexec-syscall"])
+    cmd.extend(["--flake", f".#{args.host}", args.ssh_target])
+    run(cmd)
+
+
+def cmd_image_build(args, _config):
+    run(["nix", "build", f".#packages.x86_64-linux.{args.host}"])
+
+
+def sync_to_builder(config, builder):
+    repos = config.get("repos", {})
+    public_name = repos.get("public_name", "fleet-config")
+    inventory_name = repos.get("inventory_name", "fleet-inventory")
+    root = repo_root()
+    parent = root.parent
+    for name in (public_name, inventory_name):
+        if not (parent / name).exists():
+            die(f"cannot find sibling repo: {parent / name}")
+
+    remote_root = builder["remote_root"]
+    tar_cmd = [
+        "tar",
+        "-C",
+        str(parent),
+        "--exclude",
+        f"{public_name}/.git",
+        "--exclude",
+        f"{inventory_name}/.git",
+        "--exclude",
+        f"{inventory_name}/result",
+        "--exclude",
+        f"{inventory_name}/result-*",
+        "--exclude",
+        f"{inventory_name}/main.raw",
+        "--exclude",
+        f"{inventory_name}/local/keys",
+        "-czf",
+        "-",
+        public_name,
+        inventory_name,
+    ]
+    ssh_cmd = ssh_args(builder) + [
+        f"rm -rf {shlex.quote(remote_root + '/' + public_name)} "
+        f"{shlex.quote(remote_root + '/' + inventory_name)} "
+        f"&& tar -xzf - -C {shlex.quote(remote_root)}"
+    ]
+    print("+ " + " ".join(shlex.quote(a) for a in tar_cmd) + " | " + " ".join(shlex.quote(a) for a in ssh_cmd), file=sys.stderr)
+    tar_proc = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)
+    ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout)
+    assert tar_proc.stdout is not None
+    tar_proc.stdout.close()
+    ssh_code = ssh_proc.wait()
+    tar_code = tar_proc.wait()
+    if tar_code != 0:
+        raise subprocess.CalledProcessError(tar_code, tar_cmd)
+    if ssh_code != 0:
+        raise subprocess.CalledProcessError(ssh_code, ssh_cmd)
+
+
+def cmd_image_remote(args, config):
+    builder = apply_builder_overrides(builder_config(config, args.builder), args)
+    if builder["use_kvm"]:
+        env = nix_ssh_env(builder)
+        run(
+            [
+                "nix",
+                "build",
+                "--builders",
+                builder_spec(builder, require_kvm=True),
+                "--option",
+                "builders-use-substitutes",
+                "true",
+                "--max-jobs",
+                "0",
+                f".#packages.x86_64-linux.{args.host}",
+            ],
+            env=env,
+        )
+        return
+
+    sync_to_builder(config, builder)
+    repos = config.get("repos", {})
+    public_name = repos.get("public_name", "fleet-config")
+    inventory_name = repos.get("inventory_name", "fleet-inventory")
+    remote_root = builder["remote_root"]
+    remote_nix = remote_nix_expr(builder)
+    paths = config.get("paths", {})
+    node_age_key = paths.get("node_age_key", "local/node-age.txt")
+    node_age_key_arg = ""
+    if node_age_key and repo_path(node_age_key).exists():
+        node_age_key_arg = (
+            " --post-format-files "
+            + shlex.quote(remote_repo_path(config, node_age_key, builder))
+            + " /etc/sops/age/key.txt"
+        )
+    script = (
+        f"cd {shlex.quote(remote_root + '/' + inventory_name)}; "
+        f"remote_nix={remote_nix}; "
+        f"script=$($remote_nix build --print-out-paths "
+        f"--override-input dotfiles path:{shlex.quote(remote_root + '/' + public_name)} "
+        f".#nixosConfigurations.{shlex.quote(args.host)}.config.system.build.diskoImagesScript); "
+        f"out_dir={shlex.quote(remote_root + '/disko-' + args.host)}; "
+        f"mkdir -p \"$out_dir\"; "
+        f"cd \"$out_dir\"; "
+        f"\"$script\" --build-memory {int(builder['memory'])}{node_age_key_arg} & "
+        "pid=$!; "
+        "echo \"[fleet] image build started on builder (pid=$pid)\"; "
+        "(while kill -0 \"$pid\" 2>/dev/null; do "
+        "sleep 30; "
+        "echo \"[fleet] image build still running on builder (pid=$pid)\"; "
+        "done) & "
+        "heartbeat=$!; "
+        "set +e; "
+        "wait \"$pid\"; "
+        "status=$?; "
+        "kill \"$heartbeat\" 2>/dev/null; "
+        "wait \"$heartbeat\" 2>/dev/null; "
+        "exit \"$status\""
+    )
+    remote_shell(builder, script)
+
+
+def cmd_image_download(args, config):
+    builder = apply_builder_overrides(builder_config(config, args.builder), args)
+    remote_path = args.remote_path or f"{builder['remote_root']}/disko-{args.host}/main.raw"
+    output_path = Path(args.output)
+    if output_path.parent != Path("."):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    run([*scp_args(builder), f"{builder['alias']}:{remote_path}", str(output_path)])
+
+
+def cmd_builder_ping(args, config):
+    builder = apply_builder_overrides(builder_config(config, args.builder), args)
+    env = nix_ssh_env(builder)
+    run(["nix", "store", "info", "--store", builder_ssh_url(builder)], env=env)
+
+
+def cmd_builder_dry_run(args, config):
+    builder = apply_builder_overrides(builder_config(config, args.builder), args)
+    env = nix_ssh_env(builder)
+    run(
+        [
+            "nix",
+            "build",
+            "--dry-run",
+            "--builders",
+            builder_spec(builder, require_kvm=True),
+            "--option",
+            "builders-use-substitutes",
+            "true",
+            "--max-jobs",
+            "0",
+            f".#packages.x86_64-linux.{args.host}",
+        ],
+        env=env,
+    )
+
+
+def cmd_ports(args, _config):
+    attr = "allowedTCPPorts" if args.protocol == "tcp" else "allowedUDPPorts"
+    run(["nix", "eval", f".#nixosConfigurations.{args.host}.config.networking.firewall.{attr}", "--json"])
+
+
+def cmd_lxc_switch(args, _config):
+    run(["system-manager", "switch", "--sudo", "--flake", f".#{args.host}"])
+
+
+def cmd_secret(args, config):
+    key_dir = config.get("paths", {}).get("secret_key_dir", "local/keys")
+    cmd = secret_gen_cmd()
+    if args.secret_command == "uuid":
+        cmd.append("uuid")
+    elif args.secret_command == "password":
+        cmd.extend(["password", str(args.length), args.mode])
+    elif args.secret_command == "hex":
+        cmd.extend(["hex", str(args.bytes)])
+    elif args.secret_command == "xray-shortid":
+        cmd.extend(["xray-shortid", str(args.bytes)])
+    elif args.secret_command == "xray-reality":
+        cmd.append("xray-reality")
+    elif args.secret_command == "age":
+        cmd.append("age")
+    elif args.secret_command == "age-file":
+        output_path = args.name
+        if "/" not in output_path:
+            output_path = str(Path(key_dir) / f"{args.name}.agekey")
+        cmd.extend(["age-file", output_path])
+    elif args.secret_command == "wireguard":
+        cmd.append("wireguard")
+    elif args.secret_command == "ssh":
+        output_path = args.name
+        if "/" not in output_path:
+            output_path = str(Path(key_dir) / args.name)
+        cmd.extend(["ssh-ed25519", output_path, args.comment])
+    elif args.secret_command == "proxy":
+        cmd.append("proxy")
+    else:
+        die("missing secret command")
+    run(cmd)
+
+
+JUSTFILE_TEMPLATE = """set positional-arguments := true
+
+default:
+  @just --list
+
+fmt:
+  nix run .#fleet -- fmt
+
+check:
+  nix run .#fleet -- check
+
+eval:
+  nix run .#fleet -- eval
+
+build host:
+  nix run .#fleet -- build {{host}}
+
+deploy target:
+  nix run .#fleet -- deploy {{target}}
+
+deploy-all:
+  nix run .#fleet -- deploy-all
+
+install host ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}}
+
+install-port host port ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}} --port {{port}}
+
+install-kexec-syscall host ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}} --kexec-syscall
+
+install-port-kexec-syscall host port ssh-target:
+  nix run .#fleet -- install {{host}} {{ssh-target}} --port {{port}} --kexec-syscall
+
+image host:
+  nix run .#fleet -- image build {{host}}
+
+image-remote host builder=\"\":
+  if [ -n \"{{builder}}\" ]; then nix run .#fleet -- image remote {{host}} --builder {{builder}}; else nix run .#fleet -- image remote {{host}}; fi
+
+image-remote-no-kvm host builder=\"\":
+  if [ -n \"{{builder}}\" ]; then nix run .#fleet -- image remote {{host}} --builder {{builder}} --no-kvm; else nix run .#fleet -- image remote {{host}} --no-kvm; fi
+
+image-download host builder=\"\" output=\"main.raw\":
+  if [ -n \"{{builder}}\" ]; then nix run .#fleet -- image download {{host}} --builder {{builder}} --output {{output}}; else nix run .#fleet -- image download {{host}} --output {{output}}; fi
+
+builder-ping builder=\"\":
+  if [ -n \"{{builder}}\" ]; then nix run .#fleet -- builder ping {{builder}}; else nix run .#fleet -- builder ping; fi
+
+builder-dry-run host builder=\"\":
+  if [ -n \"{{builder}}\" ]; then nix run .#fleet -- builder dry-run {{host}} --builder {{builder}}; else nix run .#fleet -- builder dry-run {{host}}; fi
+
+ports-tcp host:
+  nix run .#fleet -- ports tcp {{host}}
+
+ports-udp host:
+  nix run .#fleet -- ports udp {{host}}
+
+lxc-switch host:
+  nix run .#fleet -- lxc switch {{host}}
+
+secret-uuid:
+  nix run .#fleet -- secret uuid
+
+secret-password length=\"32\" mode=\"plain\":
+  nix run .#fleet -- secret password --length {{length}} --mode {{mode}}
+
+secret-hex bytes=\"32\":
+  nix run .#fleet -- secret hex --bytes {{bytes}}
+
+secret-xray-shortid bytes=\"8\":
+  nix run .#fleet -- secret xray-shortid --bytes {{bytes}}
+
+secret-xray-reality:
+  nix run .#fleet -- secret xray-reality
+
+secret-age:
+  nix run .#fleet -- secret age
+
+secret-age-file name:
+  nix run .#fleet -- secret age-file {{name}}
+
+secret-wireguard:
+  nix run .#fleet -- secret wireguard
+
+secret-ssh name comment=\"operator@example.invalid\":
+  nix run .#fleet -- secret ssh {{name}} --comment {{comment}}
+
+secret-proxy:
+  nix run .#fleet -- secret proxy
+
+update-justfile:
+  nix run .#fleet -- justfile render --output Justfile
+"""
+
+
+def cmd_justfile_render(args, _config):
+    if args.output == "-":
+        print(JUSTFILE_TEMPLATE, end="")
+        return
+    Path(args.output).write_text(JUSTFILE_TEMPLATE)
+    print(f"wrote {args.output}")
+
+
+def add_builder_options(parser, *, include_kvm=False):
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--ssh-key")
+    parser.add_argument("--ssh-config")
+    parser.add_argument("--remote-root")
+    parser.add_argument("--remote-nix")
+    parser.add_argument("--memory", type=int)
+    if include_kvm:
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--kvm", action="store_true")
+        group.add_argument("--no-kvm", action="store_true")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="fleet")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("fmt").set_defaults(func=cmd_fmt)
+    sub.add_parser("check").set_defaults(func=cmd_check)
+    sub.add_parser("eval").set_defaults(func=cmd_eval)
+
+    p = sub.add_parser("build")
+    p.add_argument("host")
+    p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("deploy")
+    p.add_argument("target")
+    p.set_defaults(func=cmd_deploy)
+
+    sub.add_parser("deploy-all").set_defaults(func=cmd_deploy_all)
+
+    p = sub.add_parser("install")
+    p.add_argument("host")
+    p.add_argument("ssh_target")
+    p.add_argument("--port", type=int)
+    p.add_argument("--kexec-syscall", action="store_true")
+    p.set_defaults(func=cmd_install)
+
+    image = sub.add_parser("image")
+    image_sub = image.add_subparsers(dest="image_command", required=True)
+    p = image_sub.add_parser("build")
+    p.add_argument("host")
+    p.set_defaults(func=cmd_image_build)
+    p = image_sub.add_parser("remote")
+    p.add_argument("host")
+    p.add_argument("builder", nargs="?")
+    p.add_argument("--builder", dest="builder_option")
+    add_builder_options(p, include_kvm=True)
+    p.set_defaults(func=lambda args, config: cmd_image_remote(normalize_builder_arg(args), config))
+    p = image_sub.add_parser("download")
+    p.add_argument("host")
+    p.add_argument("builder", nargs="?")
+    p.add_argument("--builder", dest="builder_option")
+    p.add_argument("--remote-path")
+    p.add_argument("--output", default="main.raw")
+    add_builder_options(p)
+    p.set_defaults(func=lambda args, config: cmd_image_download(normalize_builder_arg(args), config))
+
+    builder = sub.add_parser("builder")
+    builder_sub = builder.add_subparsers(dest="builder_command", required=True)
+    p = builder_sub.add_parser("ping")
+    p.add_argument("builder", nargs="?")
+    add_builder_options(p)
+    p.set_defaults(func=cmd_builder_ping)
+    p = builder_sub.add_parser("dry-run")
+    p.add_argument("host")
+    p.add_argument("--builder")
+    add_builder_options(p)
+    p.set_defaults(func=cmd_builder_dry_run)
+
+    ports = sub.add_parser("ports")
+    ports_sub = ports.add_subparsers(dest="protocol", required=True)
+    for protocol in ("tcp", "udp"):
+        p = ports_sub.add_parser(protocol)
+        p.add_argument("host")
+        p.set_defaults(func=cmd_ports)
+
+    lxc = sub.add_parser("lxc")
+    lxc_sub = lxc.add_subparsers(dest="lxc_command", required=True)
+    p = lxc_sub.add_parser("switch")
+    p.add_argument("host")
+    p.set_defaults(func=cmd_lxc_switch)
+
+    secret = sub.add_parser("secret")
+    secret_sub = secret.add_subparsers(dest="secret_command", required=True)
+    secret_sub.add_parser("uuid").set_defaults(func=cmd_secret)
+    p = secret_sub.add_parser("password")
+    p.add_argument("--length", default=32, type=int)
+    p.add_argument("--mode", default="plain", choices=("plain", "ss2022"))
+    p.set_defaults(func=cmd_secret)
+    p = secret_sub.add_parser("hex")
+    p.add_argument("--bytes", default=32, type=int)
+    p.set_defaults(func=cmd_secret)
+    p = secret_sub.add_parser("xray-shortid")
+    p.add_argument("--bytes", default=8, type=int)
+    p.set_defaults(func=cmd_secret)
+    secret_sub.add_parser("xray-reality").set_defaults(func=cmd_secret)
+    secret_sub.add_parser("age").set_defaults(func=cmd_secret)
+    p = secret_sub.add_parser("age-file")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_secret)
+    secret_sub.add_parser("wireguard").set_defaults(func=cmd_secret)
+    p = secret_sub.add_parser("ssh")
+    p.add_argument("name")
+    p.add_argument("--comment", default="operator@example.invalid")
+    p.set_defaults(func=cmd_secret)
+    secret_sub.add_parser("proxy").set_defaults(func=cmd_secret)
+
+    justfile = sub.add_parser("justfile")
+    justfile_sub = justfile.add_subparsers(dest="justfile_command", required=True)
+    p = justfile_sub.add_parser("render")
+    p.add_argument("--output", default="-")
+    p.set_defaults(func=cmd_justfile_render)
+
+    return parser
+
+
+def normalize_builder_arg(args):
+    if getattr(args, "builder_option", None):
+        if getattr(args, "builder", None):
+            die("pass builder either positionally or with --builder, not both")
+        args.builder = args.builder_option
+    return args
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    config = load_config()
+    args.func(args, config)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as exc:
+        sys.exit(exc.returncode)
