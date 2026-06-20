@@ -57,16 +57,18 @@ Generate client connection profiles:
 ```shell
 just profile proxy-example
 nix run .#fleet -- profile proxy-example --kind xray
+nix run .#fleet -- profile proxy-example --kind hy2
 nix run .#fleet -- profile proxy-example --kind wireguard
 nix run .#fleet -- profile proxy-example --kind xray --inbound vless-reality
 nix run .#fleet -- profile proxy-example --host proxy.example.com --name proxy
 ```
 
-The command reads Xray and WireGuard connection details from the Nix host
+The command reads Xray, HY2, and WireGuard connection details from the Nix host
 configuration, then reads client-facing secrets from `secrets/<host>.yaml`.
 Xray profiles include URI plus port, transport, Reality SNI, shortId, and other
-details. WireGuard profiles show interface addresses, listen port, public key
-when `wg` is available locally, and peers. The compatibility command
+details. HY2 profiles include port, SNI, TLS, masquerade, and a `hysteria2://`
+URI. WireGuard profiles show interface addresses, listen port, public key when
+`wg` is available locally, and peers. The compatibility command
 `just xray-uri <host>` still prints only Xray URI output.
 
 ## Secrets

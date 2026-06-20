@@ -6,6 +6,28 @@
 }: let
   cfg = config.my.proxy.hy2;
   boolJson = value: builtins.toJSON value;
+  listen = ":${toString cfg.listenPort}";
+  firewallUDPPorts =
+    if cfg.openFirewall
+    then [cfg.listenPort]
+    else [];
+  firewallUDPPortRanges =
+    if cfg.openFirewall && cfg.portHopping.enable
+    then [
+      {
+        inherit (cfg.portHopping) from to;
+      }
+    ]
+    else [];
+  redirectUDPPortRanges =
+    if cfg.openFirewall && cfg.portHopping.enable
+    then [
+      {
+        inherit (cfg.portHopping) from to;
+        target = cfg.listenPort;
+      }
+    ]
+    else [];
   obfsPasswordFile =
     if cfg.obfsPasswordFile == null
     then ""
@@ -19,7 +41,7 @@
     from pathlib import Path
 
     config = {
-      "listen": ":${toString cfg.listenPort}",
+      "listen": "${listen}",
       "auth": {
         "type": "password",
         "password": Path("${cfg.passwordFile}").read_text().strip(),
@@ -30,7 +52,7 @@
       },
     }
 
-    if ${boolJson (cfg.obfsPasswordFile != null)}:
+    if json.loads('${boolJson (cfg.obfsPasswordFile != null)}'):
       config["obfs"] = {
         "type": "salamander",
         "salamander": {
@@ -43,7 +65,7 @@
         "type": "proxy",
         "proxy": {
           "url": "${cfg.masquerade.proxy.url}",
-          "rewriteHost": ${boolJson cfg.masquerade.proxy.rewriteHost},
+          "rewriteHost": json.loads('${boolJson cfg.masquerade.proxy.rewriteHost}'),
         },
       }
 
@@ -70,6 +92,34 @@ in {
       type = lib.types.bool;
       default = true;
       description = "Open the Hysteria 2 UDP listen port through my.server.firewall.";
+    };
+
+    portHopping = {
+      enable = lib.mkEnableOption "Hysteria 2 port hopping";
+
+      from = lib.mkOption {
+        type = lib.types.port;
+        default = 20000;
+        description = "First UDP port in the Hysteria 2 port hopping range.";
+      };
+
+      to = lib.mkOption {
+        type = lib.types.port;
+        default = 50000;
+        description = "Last UDP port in the Hysteria 2 port hopping range.";
+      };
+
+      hopInterval = lib.mkOption {
+        type = lib.types.str;
+        default = "30s";
+        description = "Client-side port hopping interval to show in generated profiles.";
+      };
+    };
+
+    client.insecure = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether generated client profiles should skip TLS certificate verification.";
     };
 
     passwordFile = lib.mkOption {
@@ -121,6 +171,10 @@ in {
           assertion = cfg.tls.certFile != "" && cfg.tls.keyFile != "";
           message = "my.proxy.hy2.tls.certFile and tls.keyFile are required.";
         }
+        {
+          assertion = ! cfg.portHopping.enable || cfg.portHopping.from <= cfg.portHopping.to;
+          message = "my.proxy.hy2.portHopping.from must be less than or equal to portHopping.to.";
+        }
       ];
 
       environment.systemPackages = [cfg.package];
@@ -141,7 +195,9 @@ in {
       };
     }
     {
-      my.server.firewall.allowedUDPPorts = lib.mkIf cfg.openFirewall [cfg.listenPort];
+      my.server.firewall.allowedUDPPorts = firewallUDPPorts;
+      my.server.firewall.allowedUDPPortRanges = firewallUDPPortRanges;
+      my.server.firewall.redirectUDPPortRanges = redirectUDPPortRanges;
     }
   ]);
 }

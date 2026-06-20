@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 from shutil import which
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 from pathlib import Path
 
 try:
@@ -549,6 +549,13 @@ def xray_inbounds(host):
     return maybe_nix_eval_json(f".#nixosConfigurations.{host}.config.my.proxy.xray.inbounds") or {}
 
 
+def hy2_config(host):
+    cfg = maybe_nix_eval_json(f".#nixosConfigurations.{host}.config.my.proxy.hy2") or {}
+    if not cfg.get("enable"):
+        return {}
+    return cfg
+
+
 def wireguard_interfaces(host):
     return maybe_nix_eval_json(f".#nixosConfigurations.{host}.config.my.vpn.wireguard.interfaces") or {}
 
@@ -697,6 +704,82 @@ def wireguard_profile_entries(host, host_address, secrets, args):
     return entries
 
 
+def hy2_sni(cfg):
+    masquerade_url = ((cfg.get("masquerade") or {}).get("proxy") or {}).get("url") or ""
+    if not masquerade_url:
+        return ""
+    parsed = urlparse(masquerade_url)
+    return parsed.hostname or ""
+
+
+def hy2_uri(host, host_address, cfg, secrets, profile_name=None):
+    password = secret_value(secrets, cfg.get("passwordFile"), f"{host}.hy2")
+    label = profile_name or f"{host}-hy2"
+    query = {}
+    port_hopping = cfg.get("portHopping") or {}
+    port = cfg["listenPort"]
+    if port_hopping.get("enable"):
+        port = f"{port_hopping['from']}-{port_hopping['to']}"
+        if port_hopping.get("hopInterval"):
+            query["hopInterval"] = port_hopping["hopInterval"]
+
+    sni = hy2_sni(cfg)
+    if sni:
+        query["sni"] = sni
+    if (cfg.get("client") or {}).get("insecure"):
+        query["insecure"] = "1"
+
+    obfs_password_file = cfg.get("obfsPasswordFile")
+    if obfs_password_file:
+        query["obfs"] = "salamander"
+        query["obfs-password"] = secret_value(secrets, obfs_password_file, f"{host}.hy2.obfs")
+
+    query_string = urlencode(query)
+    suffix = f"?{query_string}" if query_string else ""
+    return f"hysteria2://{quote(password, safe='')}@{host_address}:{port}/{suffix}#{quote(label)}"
+
+
+def hy2_profile_entries(host, host_address, secrets, args):
+    cfg = hy2_config(host)
+    if not cfg:
+        return []
+
+    port_hopping = cfg.get("portHopping") or {}
+    listen = str(cfg.get("listenPort"))
+    if port_hopping.get("enable"):
+        listen = f"{port_hopping['from']}-{port_hopping['to']}"
+
+    masquerade = ((cfg.get("masquerade") or {}).get("proxy") or {})
+    obfs_password_file = cfg.get("obfsPasswordFile")
+    entry = {
+        "kind": "hy2",
+        "name": "hy2",
+        "protocol": "hysteria2",
+        "address": host_address,
+        "port": cfg.get("listenPort"),
+        "listen": listen,
+        "portHopping": cfg.get("portHopping") or {},
+        "passwordSecret": secret_key_from_runtime_path(cfg.get("passwordFile")),
+        "tls": {
+            "certFile": cfg.get("tls", {}).get("certFile"),
+            "keyFile": cfg.get("tls", {}).get("keyFile"),
+            "sni": hy2_sni(cfg),
+            "insecure": (cfg.get("client") or {}).get("insecure", False),
+        },
+        "masquerade": {
+            "url": masquerade.get("url") or "",
+            "rewriteHost": masquerade.get("rewriteHost"),
+        },
+        "uri": hy2_uri(host, host_address, cfg, secrets, args.name),
+    }
+    if obfs_password_file:
+        entry["obfs"] = {
+            "type": "salamander",
+            "passwordSecret": secret_key_from_runtime_path(obfs_password_file),
+        }
+    return [entry]
+
+
 def print_profile_text(host, address, entries, *, uri_only=False):
     if uri_only:
         for entry in entries:
@@ -754,6 +837,30 @@ def print_profile_text(host, address, entries, *, uri_only=False):
                         print(f"    Persistent keepalive: {peer.get('persistentKeepalive')}")
             else:
                 print("Peers: -")
+        elif entry["kind"] == "hy2":
+            print(f"[HY2: {entry['name']}]")
+            print(f"Protocol: {entry['protocol']}")
+            print(f"Address: {entry['address']}")
+            print(f"Listen: {entry.get('listen') or entry['port']}")
+            port_hopping = entry.get("portHopping") or {}
+            if port_hopping.get("enable"):
+                print(f"Port hopping: {port_hopping.get('from')}-{port_hopping.get('to')}")
+                print(f"Hop interval: {port_hopping.get('hopInterval')}")
+            print(f"Password secret: {entry.get('passwordSecret') or '-'}")
+            tls = entry.get("tls") or {}
+            print(f"SNI: {tls.get('sni') or '-'}")
+            print(f"TLS insecure: {tls.get('insecure')}")
+            print(f"TLS cert file: {tls.get('certFile') or '-'}")
+            masquerade = entry.get("masquerade") or {}
+            if masquerade.get("url"):
+                print(f"Masquerade URL: {masquerade.get('url')}")
+                print(f"Masquerade rewrite host: {masquerade.get('rewriteHost')}")
+            obfs = entry.get("obfs")
+            if obfs:
+                print(f"Obfs: {obfs.get('type')}")
+                print(f"Obfs password secret: {obfs.get('passwordSecret')}")
+            if entry.get("uri"):
+                print(f"URI: {entry['uri']}")
 
 
 def cmd_profile(args, config):
@@ -762,6 +869,8 @@ def cmd_profile(args, config):
     entries = []
     if args.kind in ("all", "xray"):
         entries.extend(xray_profile_entries(args.host, address, secrets, args))
+    if args.kind in ("all", "hy2"):
+        entries.extend(hy2_profile_entries(args.host, address, secrets, args))
     if args.kind in ("all", "wireguard"):
         entries.extend(wireguard_profile_entries(args.host, address, secrets, args))
 
@@ -1042,7 +1151,7 @@ def build_parser():
 
     p = sub.add_parser("profile")
     p.add_argument("host")
-    p.add_argument("--kind", choices=("all", "xray", "wireguard"), default="all")
+    p.add_argument("--kind", choices=("all", "xray", "hy2", "wireguard"), default="all")
     p.add_argument("--format", choices=("text", "json"), default="text")
     p.add_argument("--inbound", help="Xray inbound name")
     p.add_argument("--interface", help="WireGuard interface name")

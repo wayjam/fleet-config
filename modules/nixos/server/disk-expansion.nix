@@ -15,19 +15,43 @@
     set -euo pipefail
 
     marker=${lib.escapeShellArg cfg.markerFile}
-    disk=${lib.escapeShellArg effectiveDisk}
+    configured_disk=${lib.escapeShellArg (
+      if cfg.disk == null
+      then ""
+      else cfg.disk
+    )}
     root_device=${lib.escapeShellArg cfg.rootDevice}
 
+    if [ ! -e "$root_device" ]; then
+      root_device="$(${pkgs.util-linux}/bin/findmnt -n -o SOURCE /)"
+    fi
+
+    if [ -n "$configured_disk" ] && [ -b "$configured_disk" ]; then
+      disk="$configured_disk"
+    else
+      disk="/dev/$(${pkgs.util-linux}/bin/lsblk -n -o PKNAME "$root_device" | head -n1 | tr -d '[:space:]')"
+    fi
+
+    root_partition_number="$(${pkgs.util-linux}/bin/lsblk -n -o PARTN "$root_device" | head -n1 | tr -d '[:space:]')"
+    if [ -z "$root_partition_number" ]; then
+      root_partition_number=${toString cfg.rootPartitionNumber}
+    fi
+
     if [ -e "$marker" ]; then
-      echo "disk expansion already completed: $marker"
-      exit 0
+      disk_size="$(${pkgs.util-linux}/bin/blockdev --getsize64 "$disk")"
+      root_size="$(${pkgs.util-linux}/bin/blockdev --getsize64 "$root_device")"
+      if [ "$root_size" -ge "$((disk_size - 67108864))" ]; then
+        echo "disk expansion already completed: $marker"
+        exit 0
+      fi
+      echo "disk expansion marker exists but root partition is still smaller than disk; expanding"
     fi
 
     mkdir -p "$(dirname "$marker")"
 
     ${pkgs.gptfdisk}/bin/sgdisk -e "$disk" || true
-    ${pkgs.cloud-utils}/bin/growpart "$disk" ${toString cfg.rootPartitionNumber} || true
-    ${pkgs.util-linux}/bin/partprobe "$disk" || true
+    ${pkgs.cloud-utils}/bin/growpart "$disk" "$root_partition_number"
+    ${pkgs.parted}/bin/partprobe "$disk" || true
     ${pkgs.systemd}/bin/udevadm settle || true
     ${pkgs.e2fsprogs}/bin/resize2fs "$root_device"
 
@@ -145,6 +169,7 @@ in {
       pkgs.cloud-utils
       pkgs.e2fsprogs
       pkgs.gptfdisk
+      pkgs.parted
       pkgs.util-linux
     ];
 
