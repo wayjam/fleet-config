@@ -3,92 +3,138 @@ set positional-arguments := true
 default:
   @just --list
 
+# Format all Nix files.
 fmt:
   nix run .#fleet -- fmt
 
+# Run flake checks.
 check:
   nix run .#fleet -- check
 
+# Evaluate all fleet outputs.
 eval:
   nix run .#fleet -- eval
 
+# Build a host system closure.
 build host:
   nix run .#fleet -- build {{host}}
 
+# Deploy a host or Colmena target selector.
 deploy target:
   nix run .#fleet -- deploy {{target}}
 
+# Deploy all Colmena hosts.
 deploy-all:
   nix run .#fleet -- deploy-all
 
+# Install a fresh NixOS host with nixos-anywhere.
 install host ssh-target:
   nix run .#fleet -- install {{host}} {{ssh-target}}
 
+# Install a fresh NixOS host over a custom SSH port.
 install-port host port ssh-target:
   nix run .#fleet -- install {{host}} {{ssh-target}} --port {{port}}
 
+# Install using nixos-anywhere kexec syscall mode.
 install-kexec-syscall host ssh-target:
   nix run .#fleet -- install {{host}} {{ssh-target}} --kexec-syscall
 
+# Install over a custom SSH port using kexec syscall mode.
 install-port-kexec-syscall host port ssh-target:
   nix run .#fleet -- install {{host}} {{ssh-target}} --port {{port}} --kexec-syscall
 
+# Build a disko image for a host.
 image host:
   nix run .#fleet -- image build {{host}}
 
+# Build a disko image on the configured remote builder.
 image-remote host builder="":
   if [ -n "{{builder}}" ]; then nix run .#fleet -- image remote {{host}} --builder {{builder}}; else nix run .#fleet -- image remote {{host}}; fi
 
+# Build a disko image on a remote builder without KVM.
 image-remote-no-kvm host builder="":
   if [ -n "{{builder}}" ]; then nix run .#fleet -- image remote {{host}} --builder {{builder}} --no-kvm; else nix run .#fleet -- image remote {{host}} --no-kvm; fi
 
+# Download a remote-built disko image.
 image-download host builder="" output="main.raw":
   if [ -n "{{builder}}" ]; then nix run .#fleet -- image download {{host}} --builder {{builder}} --output {{output}}; else nix run .#fleet -- image download {{host}} --output {{output}}; fi
 
+# Check connectivity to the configured remote builder.
 builder-ping builder="":
   if [ -n "{{builder}}" ]; then nix run .#fleet -- builder ping {{builder}}; else nix run .#fleet -- builder ping; fi
 
+# Dry-run a host build on the configured remote builder.
 builder-dry-run host builder="":
   if [ -n "{{builder}}" ]; then nix run .#fleet -- builder dry-run {{host}} --builder {{builder}}; else nix run .#fleet -- builder dry-run {{host}}; fi
 
+# Print allowed TCP ports for a host.
 ports-tcp host:
   nix run .#fleet -- ports tcp {{host}}
 
+# Print allowed UDP ports for a host.
 ports-udp host:
   nix run .#fleet -- ports udp {{host}}
 
+# Show client connection profiles from host config and secrets.
+profile host:
+  nix run .#fleet -- profile {{host}}
+
+# Show client connection profiles for one backend kind.
+profile-kind host kind:
+  nix run .#fleet -- profile {{host}} --kind {{kind}}
+
+# Compatibility alias: print Xray URI(s) only.
+xray-uri host:
+  nix run .#fleet -- xray-uri {{host}}
+
+# Compatibility alias: print one Xray inbound URI only.
+xray-uri-inbound host inbound:
+  nix run .#fleet -- xray-uri {{host}} --inbound {{inbound}}
+
+# Switch a system-manager LXC or existing Linux host.
 lxc-switch host:
   nix run .#fleet -- lxc switch {{host}}
 
+# Generate a UUID secret.
 secret-uuid:
   nix run .#fleet -- secret uuid
 
+# Generate a random password.
 secret-password length="32" mode="plain":
   nix run .#fleet -- secret password --length {{length}} --mode {{mode}}
 
+# Generate random hex.
 secret-hex bytes="32":
   nix run .#fleet -- secret hex --bytes {{bytes}}
 
+# Generate an Xray Reality shortId.
 secret-xray-shortid bytes="8":
   nix run .#fleet -- secret xray-shortid --bytes {{bytes}}
 
+# Generate an Xray Reality keypair.
 secret-xray-reality:
   nix run .#fleet -- secret xray-reality
 
+# Print an age keypair.
 secret-age:
   nix run .#fleet -- secret age
 
+# Create a local age key file.
 secret-age-file name:
   nix run .#fleet -- secret age-file {{name}}
 
+# Generate a WireGuard keypair.
 secret-wireguard:
   nix run .#fleet -- secret wireguard
 
+# Generate an SSH ed25519 keypair.
 secret-ssh name comment="operator@example.invalid":
   nix run .#fleet -- secret ssh {{name}} --comment {{comment}}
 
+# Generate a proxy secret bundle.
 secret-proxy:
   nix run .#fleet -- secret proxy
 
+# Regenerate this Justfile from the fleet template.
 update-justfile:
   nix run .#fleet -- justfile render --output Justfile

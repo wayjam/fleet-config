@@ -16,6 +16,12 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    sops.age.keyFile = cfg.keyFile;
+    sops = {
+      age = {
+        keyFile = cfg.keyFile;
+        sshKeyPaths = lib.mkForce [];
+      };
+      gnupg.sshKeyPaths = lib.mkForce [];
+    };
   };
 }

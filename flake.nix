@@ -109,6 +109,7 @@
           gnutar
           nix
           openssh
+          sops
         ];
         text = ''
           exec ${pkgs.python3}/bin/python3 ${./tools/fleet} "$@"
@@ -158,6 +159,7 @@
         server-ssh = ./modules/nixos/server/ssh.nix;
         server-firewall = ./modules/nixos/server/firewall.nix;
         server-fail2ban = ./modules/nixos/server/fail2ban.nix;
+        server-disk-expansion = ./modules/nixos/server/disk-expansion.nix;
         server-tuning = ./modules/nixos/server/tuning.nix;
         sops-age-key = ./modules/nixos/secrets/sops-age-key.nix;
         vpn-wireguard = ./modules/nixos/vpn/wireguard.nix;

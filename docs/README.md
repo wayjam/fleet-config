@@ -36,6 +36,7 @@ Expected workspace layout:
     docs/                         # Public operational documentation
       README.md                   # Design overview and documentation index
       setup-host.md               # New host setup flow and scenarios
+      image-host-checklist.md      # Raw image/dd host discovery and boot checklist
       host-troubleshooting.md     # Inventory and deployment troubleshooting
     modules/                      # Reusable NixOS and system-manager modules
     templates/fleet-inventory/    # Sanitized private inventory skeleton
@@ -138,6 +139,11 @@ Use the private inventory for all real operations.
 6. Update the host with Colmena.
 
 Use [setup-host.md](./setup-host.md) for the complete new-host flow.
+
+Use [image-host-checklist.md](./image-host-checklist.md) before building a raw
+disk image for a new host. It covers provider OS hardware discovery, initrd
+storage drivers, disko image configuration, first-boot secrets, disk expansion,
+and Stage 1 boot failure triage.
 
 Use [host-troubleshooting.md](./host-troubleshooting.md) when inventory,
 flake lock, remote builder, or deployment behavior looks wrong.

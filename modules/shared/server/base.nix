@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }: let
@@ -36,14 +37,16 @@ in {
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    environment.systemPackages = cfg.packages;
+  config =
+    lib.mkIf cfg.enable {
+      environment.systemPackages = cfg.packages;
 
-    nix.settings = {
-      experimental-features = ["nix-command" "flakes"];
-      builders-use-substitutes = lib.mkDefault true;
+      nix.settings = {
+        experimental-features = ["nix-command" "flakes"];
+        builders-use-substitutes = lib.mkDefault true;
+      };
+    }
+    // lib.optionalAttrs (options ? nix.optimise) {
+      nix.optimise.automatic = lib.mkDefault true;
     };
-
-    nix.optimise.automatic = lib.mkDefault true;
-  };
 }

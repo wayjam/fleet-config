@@ -110,8 +110,13 @@ in rec {
 
     systemConfigs = lib.mapAttrs (_: host:
       system-manager.lib.makeSystemConfig {
-        inherit pkgs;
-        modules = [host.path];
+        specialArgs = {inherit inputs;};
+        modules = [
+          {
+            nixpkgs.hostPlatform = system;
+          }
+          host.path
+        ];
       })
     inventory.system;
   };

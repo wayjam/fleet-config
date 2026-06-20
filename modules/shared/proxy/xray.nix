@@ -131,6 +131,7 @@
   };
 
   renderedInbounds = lib.mapAttrsToList renderInbound cfg.inbounds;
+  inboundsJson = pkgs.writeText "xray-inbounds.json" (builtins.toJSON renderedInbounds);
 
   hasNetwork = needle: network:
     network == needle || network == "tcp,udp";
@@ -165,7 +166,7 @@
     import json
     from pathlib import Path
 
-    source_inbounds = json.loads(r'''${builtins.toJSON renderedInbounds}''')
+    source_inbounds = json.loads(Path("${inboundsJson}").read_text())
     inbounds = []
 
     for source in source_inbounds:
@@ -274,20 +275,20 @@ in {
           }
         ]
         ++ lib.flatten (lib.mapAttrsToList (name: inbound: [
-          {
-            assertion = inbound.type != "vless" || inbound.uuidFile != null;
-            message = "my.proxy.xray.inbounds.${name}.uuidFile is required for VLESS inbounds.";
-          }
-          {
-            assertion = inbound.type != "vless" || (! inbound.reality.enable) || inbound.reality.privateKeyFile != null;
-            message = "my.proxy.xray.inbounds.${name}.reality.privateKeyFile is required when Reality is enabled.";
-          }
-          {
-            assertion = inbound.type != "shadowsocks" || inbound.passwordFile != null;
-            message = "my.proxy.xray.inbounds.${name}.passwordFile is required for Shadowsocks inbounds.";
-          }
-        ])
-        cfg.inbounds);
+            {
+              assertion = inbound.type != "vless" || inbound.uuidFile != null;
+              message = "my.proxy.xray.inbounds.${name}.uuidFile is required for VLESS inbounds.";
+            }
+            {
+              assertion = inbound.type != "vless" || (! inbound.reality.enable) || inbound.reality.privateKeyFile != null;
+              message = "my.proxy.xray.inbounds.${name}.reality.privateKeyFile is required when Reality is enabled.";
+            }
+            {
+              assertion = inbound.type != "shadowsocks" || inbound.passwordFile != null;
+              message = "my.proxy.xray.inbounds.${name}.passwordFile is required for Shadowsocks inbounds.";
+            }
+          ])
+          cfg.inbounds);
 
       environment.systemPackages = [cfg.package];
 
