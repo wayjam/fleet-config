@@ -35,6 +35,7 @@ Expected workspace layout:
   fleet-config/                  # Public repo: shared modules, scripts, docs, templates
     docs/                         # Public operational documentation
       README.md                   # Design overview and documentation index
+      just-recipes.md             # Private inventory Justfile command reference
       setup-host.md               # New host setup flow and scenarios
       image-host-checklist.md      # Raw image/dd host discovery and boot checklist
       host-troubleshooting.md     # Inventory and deployment troubleshooting
@@ -139,6 +140,9 @@ Use the private inventory for all real operations.
 6. Update the host with Colmena.
 
 Use [setup-host.md](./setup-host.md) for the complete new-host flow.
+
+Use [just-recipes.md](./just-recipes.md) for each private inventory Justfile
+recipe's purpose, arguments, and example usage.
 
 Use [image-host-checklist.md](./image-host-checklist.md) before building a raw
 disk image for a new host. It covers provider OS hardware discovery, initrd

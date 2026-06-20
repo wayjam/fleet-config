@@ -1,0 +1,301 @@
+# Just Recipes
+
+This document describes the `Justfile` recipes exposed by a private
+`fleet-inventory` repository generated from this project.
+
+Run commands from the private inventory root:
+
+```shell
+cd ../fleet-inventory
+just --list
+```
+
+Prefer named Just arguments for optional values:
+
+```shell
+just secret-password length=16 mode=ss2022
+just image-download aws-jp1 output=main.raw
+```
+
+## Validation And Build
+
+### `just fmt`
+
+Format Nix files.
+
+```shell
+just fmt
+```
+
+### `just check`
+
+Run flake checks.
+
+```shell
+just check
+```
+
+### `just eval`
+
+Evaluate the fleet outputs without deploying.
+
+```shell
+just eval
+```
+
+### `just build <host>`
+
+Build one host system closure locally.
+
+```shell
+just build aws-jp1
+```
+
+## Deployment And Install
+
+### `just deploy <target>`
+
+Deploy one host or Colmena target selector.
+
+```shell
+just deploy aws-jp1
+just deploy @proxy
+```
+
+### `just deploy-all`
+
+Deploy all Colmena hosts.
+
+```shell
+just deploy-all
+```
+
+### `just install <host> <ssh-target>`
+
+Install a fresh NixOS host with `nixos-anywhere`.
+
+```shell
+just install aws-jp1 root@203.0.113.10
+```
+
+### `just install-port <host> <port> <ssh-target>`
+
+Install a fresh NixOS host over a custom SSH port.
+
+```shell
+just install-port aws-jp1 2234 root@203.0.113.10
+```
+
+### `just install-kexec-syscall <host> <ssh-target>`
+
+Install with `nixos-anywhere --kexec-syscall`.
+
+```shell
+just install-kexec-syscall aws-jp1 root@203.0.113.10
+```
+
+### `just install-port-kexec-syscall <host> <port> <ssh-target>`
+
+Install over a custom SSH port with `nixos-anywhere --kexec-syscall`.
+
+```shell
+just install-port-kexec-syscall aws-jp1 2234 root@203.0.113.10
+```
+
+## Images
+
+### `just image <host>`
+
+Build a disko image for a host.
+
+```shell
+just image aws-jp1
+```
+
+### `just image-remote <host> [builder]`
+
+Build a disko image on the configured remote builder.
+
+```shell
+just image-remote aws-jp1
+just image-remote aws-jp1 builder
+```
+
+### `just image-remote-no-kvm <host> [builder]`
+
+Build a disko image on a remote builder without requiring KVM.
+
+```shell
+just image-remote-no-kvm aws-jp1
+```
+
+### `just image-download <host> [builder] [output]`
+
+Download a remote-built disko image.
+
+```shell
+just image-download aws-jp1 output=main.raw
+just image-download aws-jp1 builder output=aws-jp1.raw
+```
+
+## Builder Checks
+
+### `just builder-ping [builder]`
+
+Check connectivity to the configured remote builder.
+
+```shell
+just builder-ping
+just builder-ping builder
+```
+
+### `just builder-dry-run <host> [builder]`
+
+Dry-run a host build on the configured remote builder.
+
+```shell
+just builder-dry-run aws-jp1
+just builder-dry-run aws-jp1 builder
+```
+
+## Host Introspection
+
+### `just ports-tcp <host>`
+
+Print allowed TCP ports for a host.
+
+```shell
+just ports-tcp aws-jp1
+```
+
+### `just ports-udp <host>`
+
+Print allowed UDP ports for a host.
+
+```shell
+just ports-udp aws-jp1
+```
+
+### `just profile <host>`
+
+Show client connection profiles from host config and secrets.
+
+```shell
+just profile aws-jp1
+```
+
+### `just profile-kind <host> <kind>`
+
+Show client connection profiles for one backend kind.
+
+Supported kinds are `xray`, `hy2`, and `wireguard`.
+
+```shell
+just profile-kind aws-jp1 xray
+just profile-kind aws-jp1 hy2
+```
+
+### `just lxc-switch <host>`
+
+Switch a system-manager LXC or existing Linux host.
+
+```shell
+just lxc-switch lxc-example
+```
+
+## Secrets
+
+### `just secret-uuid`
+
+Generate a UUID.
+
+```shell
+just secret-uuid
+```
+
+### `just secret-password [length] [mode]`
+
+Generate a random password using the flag-based fleet CLI.
+
+`mode` is `plain` or `ss2022`.
+
+```shell
+just secret-password
+just secret-password length=16 mode=ss2022
+```
+
+### `just secret-hex [bytes]`
+
+Generate random hex.
+
+```shell
+just secret-hex
+just secret-hex bytes=16
+```
+
+### `just secret-xray-shortid [bytes]`
+
+Generate an Xray Reality shortId.
+
+```shell
+just secret-xray-shortid
+just secret-xray-shortid bytes=8
+```
+
+### `just secret-xray-reality`
+
+Generate an Xray Reality keypair.
+
+```shell
+just secret-xray-reality
+```
+
+### `just secret-age`
+
+Print an age keypair.
+
+```shell
+just secret-age
+```
+
+### `just secret-age-file <name>`
+
+Create a local age key file under `local/keys` when `name` has no slash.
+
+```shell
+just secret-age-file admin
+```
+
+### `just secret-wireguard`
+
+Generate a WireGuard keypair.
+
+```shell
+just secret-wireguard
+```
+
+### `just secret-ssh <name> [comment]`
+
+Generate an SSH ed25519 keypair under `local/keys` when `name` has no slash.
+
+```shell
+just secret-ssh admin comment=operator@example.invalid
+```
+
+### `just secret-proxy`
+
+Generate a proxy secret bundle.
+
+```shell
+just secret-proxy
+```
+
+## Maintenance
+
+### `just update-justfile`
+
+Regenerate the private inventory `Justfile` from the fleet template.
+
+```shell
+just update-justfile
+```

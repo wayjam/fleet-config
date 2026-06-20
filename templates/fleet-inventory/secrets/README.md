@@ -30,7 +30,7 @@ just secret-age-file admin
 just secret-uuid
 just secret-xray-reality
 just secret-xray-shortid
-just secret-password 16 ss2022
+just secret-password length=16 mode=ss2022
 just secret-wireguard
 just secret-proxy
 ```

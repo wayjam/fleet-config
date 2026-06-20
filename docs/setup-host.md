@@ -208,7 +208,7 @@ Generate secret values with the private inventory helper recipes:
 ```shell
 just secret-uuid
 just secret-xray-reality
-just secret-password 16 ss2022
+just secret-password length=16 mode=ss2022
 just secret-wireguard
 ```
 

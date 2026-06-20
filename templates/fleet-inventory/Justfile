@@ -83,14 +83,6 @@ profile host:
 profile-kind host kind:
   nix run .#fleet -- profile {{host}} --kind {{kind}}
 
-# Compatibility alias: print Xray URI(s) only.
-xray-uri host:
-  nix run .#fleet -- xray-uri {{host}}
-
-# Compatibility alias: print one Xray inbound URI only.
-xray-uri-inbound host inbound:
-  nix run .#fleet -- xray-uri {{host}} --inbound {{inbound}}
-
 # Switch a system-manager LXC or existing Linux host.
 lxc-switch host:
   nix run .#fleet -- lxc switch {{host}}

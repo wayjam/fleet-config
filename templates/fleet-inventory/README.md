@@ -68,8 +68,7 @@ configuration, then reads client-facing secrets from `secrets/<host>.yaml`.
 Xray profiles include URI plus port, transport, Reality SNI, shortId, and other
 details. HY2 profiles include port, SNI, TLS, masquerade, and a `hysteria2://`
 URI. WireGuard profiles show interface addresses, listen port, public key when
-`wg` is available locally, and peers. The compatibility command
-`just xray-uri <host>` still prints only Xray URI output.
+`wg` is available locally, and peers.
 
 ## Secrets
 
