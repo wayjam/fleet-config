@@ -22,6 +22,12 @@ Run the hardware discovery commands on the provider's original OS, Debian rescue
 system, or any temporary Linux image that can boot successfully on the target
 machine.
 
+If the provider does not offer VNC or serial console access and repeated raw
+image attempts fail in Stage 1, prefer the
+[nixos-infect flow](./infect-host-flow.md) from the provider's Debian or Ubuntu
+image. It preserves the provider's working disk and boot layout, then switches
+to the full fleet configuration after the first NixOS boot.
+
 ## 1. Collect Hardware Information
 
 Install the basic discovery tools on Debian or a rescue system:

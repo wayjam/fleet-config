@@ -62,6 +62,15 @@ just deploy aws-jp1
 just deploy @proxy
 ```
 
+### `just deploy-remote <target> [builder]`
+
+Sync the local public and private worktrees to a remote builder, then deploy
+from that builder with Colmena.
+
+```shell
+just deploy-remote aws-jp1 builder
+```
+
 ### `just deploy-all`
 
 Deploy all Colmena hosts.
@@ -101,6 +110,34 @@ Install over a custom SSH port with `nixos-anywhere --kexec-syscall`.
 ```shell
 just install-port-kexec-syscall aws-jp1 2234 root@203.0.113.10
 ```
+
+### `just infect <host> [ssh-target] [builder]`
+
+Convert a provider Debian or Ubuntu host to NixOS with `nixos-infect`, then
+deploy the full fleet configuration from the remote builder.
+
+```shell
+just infect aws-jp1 root@203.0.113.10 builder
+```
+
+If the provider SSH port is not 22, use the underlying fleet command:
+
+```shell
+nix run .#fleet -- infect aws-jp1 root@203.0.113.10 \
+  --builder builder \
+  --current-port 2222
+```
+
+Useful recovery flags:
+
+```shell
+nix run .#fleet -- infect aws-jp1 root@203.0.113.10 --builder builder --dry-run
+nix run .#fleet -- infect aws-jp1 root@203.0.113.10 --builder builder --stage run-infect
+nix run .#fleet -- infect aws-jp1 root@203.0.113.10 --builder builder --stage deploy-remote
+nix run .#fleet -- infect aws-jp1 root@203.0.113.10 --builder builder --stop-after upload-config
+```
+
+Stages are documented in [infect-host-flow.md](./infect-host-flow.md).
 
 ## Images
 

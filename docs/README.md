@@ -38,6 +38,7 @@ Expected workspace layout:
       just-recipes.md             # Private inventory Justfile command reference
       setup-host.md               # New host setup flow and scenarios
       image-host-checklist.md      # Raw image/dd host discovery and boot checklist
+      infect-host-flow.md          # Low-memory VPS conversion with nixos-infect
       host-troubleshooting.md     # Inventory and deployment troubleshooting
     modules/                      # Reusable NixOS and system-manager modules
     templates/fleet-inventory/    # Sanitized private inventory skeleton
@@ -136,7 +137,8 @@ Use the private inventory for all real operations.
 2. Register the host in `fleet-inventory/hosts/default.nix`.
 3. Add encrypted sops files under `fleet-inventory/secrets`.
 4. Run `just fmt`, `just check`, and `just eval`.
-5. Install with `nixos-anywhere` or build a disk image and `dd` it.
+5. Install with `nixos-anywhere`, build a disk image and `dd` it, or use
+   `nixos-infect` for low-memory Debian/Ubuntu provider images.
 6. Update the host with Colmena.
 
 Use [setup-host.md](./setup-host.md) for the complete new-host flow.
@@ -148,6 +150,10 @@ Use [image-host-checklist.md](./image-host-checklist.md) before building a raw
 disk image for a new host. It covers provider OS hardware discovery, initrd
 storage drivers, disko image configuration, first-boot secrets, disk expansion,
 and Stage 1 boot failure triage.
+
+Use [infect-host-flow.md](./infect-host-flow.md) when a provider can boot
+Debian or Ubuntu with SSH, but `nixos-anywhere` kexec or raw image `dd` is too
+fragile to operate without VNC.
 
 Use [host-troubleshooting.md](./host-troubleshooting.md) when inventory,
 flake lock, remote builder, or deployment behavior looks wrong.

@@ -414,7 +414,52 @@ After installation, deploy through Colmena on the target NixOS SSH port:
 just deploy jp-proxy-01
 ```
 
-## Scenario C: Manage a Non-NixOS LXC Host
+## Scenario C: Convert Provider Debian With nixos-infect
+
+Use this when the provider can boot Debian or Ubuntu and root SSH works, but
+`nixos-anywhere` kexec runs out of memory or raw disk images are too hard to
+debug without VNC.
+
+Register the host as a normal deployed host, not an image host:
+
+```nix
+jp-proxy-01 = {
+  image = false;
+  path = ./jp-proxy-01;
+
+  deployment = {
+    targetHost = "203.0.113.10";
+    targetPort = 2234;
+    targetUser = "root";
+    buildOnTarget = false;
+    tags = ["proxy" "kvm" "jp"];
+  };
+};
+```
+
+Run the full synchronous flow:
+
+```shell
+just infect jp-proxy-01 root@203.0.113.10 builder
+```
+
+If the provider SSH port is not 22:
+
+```shell
+nix run .#fleet -- infect jp-proxy-01 root@203.0.113.10 \
+  --builder builder \
+  --current-port 2222
+```
+
+The command stages minimal NixOS with `nixos-infect`, reboots, waits for the
+configured NixOS SSH port, then deploys the full fleet configuration from the
+remote builder. Use `--stage` and `--stop-after` to recover from an interrupted
+stage instead of restarting from scratch.
+
+See [infect-host-flow.md](./infect-host-flow.md) for the complete stage and
+recovery reference.
+
+## Scenario D: Manage a Non-NixOS LXC Host
 
 Use this for LXC or other non-NixOS hosts where replacing the OS is not the
 goal.
@@ -426,7 +471,7 @@ goal.
 Keep service expectations conservative on LXC. Kernel, firewall, WireGuard,
 and systemd behavior may be constrained by the provider.
 
-## Scenario D: NAT or Provider Port Mapping
+## Scenario E: NAT or Provider Port Mapping
 
 For NAT hosts, declare internal service ports in Nix and record provider port
 mapping in the private host file or private notes.

@@ -21,7 +21,10 @@ fleet-config/
   Justfile                          # Local maintenance commands
   docs/                             # Fleet operation documentation
     README.md                       # Design overview and docs index
+    just-recipes.md                 # Private inventory Justfile command reference
     setup-host.md                   # New host setup flow
+    image-host-checklist.md         # Raw image/dd host discovery and boot checklist
+    infect-host-flow.md             # Low-memory VPS conversion with nixos-infect
     host-troubleshooting.md         # Inventory and deployment troubleshooting
   modules/
     nixos/                          # NixOS host profiles and modules
