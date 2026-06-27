@@ -3,6 +3,9 @@
 Stages: probe → render-config → upload-config → run-infect → install-secrets
 → reboot → wait-ssh → deploy-remote → health-check. State markers persist on
 the target under REMOTE_INFECT_DIR so stages can resume.
+
+The pipeline is executed through :class:`StageRunner` for unified retry /
+resume / interactive failure handling.
 """
 
 import argparse
@@ -11,18 +14,19 @@ import json
 import shlex
 import subprocess
 import sys
-import time
 
 from builder import apply_builder_overrides, builder_config, ssh_args
 from common import capture, die, repo_path
 from deploy import cmd_deploy
 from nix import eval_host_json, eval_host_raw, host_deployment
+from orchestrator import RunContext, Stage, StageRunner, make_context
 from target import (
     normalize_ssh_target,
-    ssh_base as target_ssh_base,
     target_read_text,
     target_run,
     target_upload_text,
+    wait_ssh_down,
+    wait_ssh_up,
 )
 
 
@@ -390,6 +394,7 @@ if [ ! -s nixos-infect ]; then
 fi
 chmod +x nixos-infect
 perl -0pi -e 's#mktemp /tmp/nixos-infect\.XXXXX\.swp#mktemp /root/fleet-infect/nixos-infect.XXXXX.swp#g; s#rm -vf /tmp/nixos-infect\.\*\.swp#rm -vf /root/fleet-infect/nixos-infect.*.swp#g' nixos-infect
+set -euo pipefail
 NIX_CHANNEL={shlex.quote(nix_channel)} NO_REBOOT=1 bash -x ./nixos-infect 2>&1 | tee {REMOTE_INFECT_DIR}/infect.log
 """
     target_run(user, host, port, script, timeout=args.timeout)
@@ -412,23 +417,123 @@ grep -qxF etc/sops/age/key.txt /etc/NIXOS_LUSTRATE || printf '%s\n' etc/sops/age
     target_mark_stage(user, host, port, "install-secrets", timeout=args.timeout)
 
 
-def wait_for_ssh(user, host, port, timeout):
-    deadline = time.time() + int(timeout)
-    while time.time() < deadline:
-        result = subprocess.run(
-            [*target_ssh_base(user, host, port, timeout=8), "true"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(5)
-    die(f"timed out waiting for SSH on {user}@{host}:{port}")
-
-
 def infect_health_check(user, host, port, args):
-    script = "hostname; readlink /run/current-system; findmnt -no SOURCE,FSTYPE /; systemctl --failed --no-pager; systemctl is-active sshd || systemctl is-active ssh; systemctl is-active fail2ban || true"
+    script = (
+        "test -d /etc/NIXOS && echo 'NixOS: yes' || echo 'NixOS: no'; "
+        "hostname; "
+        "readlink /run/current-system; "
+        "findmnt -no SOURCE,FSTYPE /; "
+        "systemctl --failed --no-pager; "
+        "systemctl is-active sshd || systemctl is-active ssh; "
+        "systemctl is-active fail2ban || true"
+    )
     target_run(user, host, port, script, timeout=args.timeout)
+
+
+# ---------------------------------------------------------------------------
+# StageRunner-based pipeline
+# ---------------------------------------------------------------------------
+
+
+def _build_infect_stages(ctx: RunContext) -> list[Stage]:
+    """Build the list of Stage objects for the infect pipeline."""
+    user = ctx.data["user"]
+    target_host = ctx.data["target_host"]
+    current_port = ctx.data["current_port"]
+    target_port = ctx.data["target_port"]
+    nix_channel = ctx.data["nix_channel"]
+    args = ctx.args
+    config = ctx.config
+    builder = ctx.data["builder"]
+
+    # Mutable port tracker shared across stages.
+    ctx.data["active_port"] = current_port
+
+    def get_port():
+        return ctx.data["active_port"]
+
+    def set_port(port):
+        ctx.data["active_port"] = port
+
+    def stage_probe(ctx):
+        probe = run_infect_probe(user, target_host, get_port(), args)
+        ctx.data["probe"] = probe
+
+    def stage_render_config(ctx):
+        probe = ctx.data.get("probe")
+        if probe is None:
+            probe = remote_probe_json(user, target_host, get_port(), args)
+            ctx.data["probe"] = probe
+        configuration, hardware = render_infect_configs(args.host, probe, args)
+        target_upload_text(user, target_host, get_port(), f"{REMOTE_INFECT_DIR}/configuration.nix", configuration, timeout=args.timeout)
+        target_upload_text(user, target_host, get_port(), f"{REMOTE_INFECT_DIR}/hardware-configuration.nix", hardware, timeout=args.timeout)
+        target_mark_stage(user, target_host, get_port(), "render-config", timeout=args.timeout)
+
+    def stage_upload_config(ctx):
+        if not remote_configs_exist(user, target_host, get_port(), args):
+            die("missing rendered config; run --stage render-config first")
+        target_run(
+            user, target_host, get_port(),
+            f"install -d -m 0755 /etc/nixos; cp {REMOTE_INFECT_DIR}/configuration.nix /etc/nixos/configuration.nix; cp {REMOTE_INFECT_DIR}/hardware-configuration.nix /etc/nixos/hardware-configuration.nix",
+            timeout=args.timeout,
+        )
+        target_mark_stage(user, target_host, get_port(), "upload-config", timeout=args.timeout)
+
+    def stage_run_infect(ctx):
+        run_infect_script(user, target_host, get_port(), nix_channel, args)
+
+    def stage_install_secrets(ctx):
+        install_node_age_key(user, target_host, get_port(), config, args)
+
+    def stage_reboot(ctx):
+        try:
+            target_run(user, target_host, get_port(), "reboot", timeout=8)
+        except subprocess.CalledProcessError:
+            pass
+        # SSH will drop; wait for it to go down, then switch port.
+        wait_ssh_down(user, target_host, get_port(), timeout=60, poll_interval=3)
+        set_port(target_port)
+
+    def stage_wait_ssh(ctx):
+        set_port(target_port)
+        wait_ssh_up(user, target_host, get_port(), timeout=int(args.timeout), poll_interval=5)
+
+    def stage_deploy_remote(ctx):
+        deploy_args = argparse.Namespace(
+            target=args.host,
+            builder=builder["name"],
+            port=builder.get("port"),
+            ssh_key=builder.get("ssh_key"),
+            ssh_config=builder.get("ssh_config"),
+            remote_root=builder.get("remote_root"),
+            remote_nix=builder.get("remote_nix"),
+            memory=builder.get("memory"),
+            kvm=False,
+            no_kvm=not builder.get("use_kvm", False),
+            non_interactive=True,
+            interactive=False,
+            retry=0,
+            restart=False,
+            from_stage=None,
+            stop_after=None,
+        )
+        cmd_deploy(deploy_args, config)
+
+    def stage_health_check(ctx):
+        set_port(target_port)
+        infect_health_check(user, target_host, get_port(), args)
+
+    return [
+        Stage(name="probe", description="probe target hardware/network", run=stage_probe, retryable=True),
+        Stage(name="render-config", description="render NixOS configuration.nix + hardware-configuration.nix", run=stage_render_config, retryable=True),
+        Stage(name="upload-config", description="upload configs to /etc/nixos", run=stage_upload_config, retryable=True),
+        Stage(name="run-infect", description="run nixos-infect script", run=stage_run_infect, retryable=False, destructive=True),
+        Stage(name="install-secrets", description="install node age key", run=stage_install_secrets, retryable=True),
+        Stage(name="reboot", description="reboot target into NixOS", run=stage_reboot, retryable=False, destructive=True),
+        Stage(name="wait-ssh", description="wait for SSH to come back on target port", run=stage_wait_ssh, retryable=True),
+        Stage(name="deploy-remote", description="deploy host config from remote builder", run=stage_deploy_remote, retryable=False, destructive=True),
+        Stage(name="health-check", description="verify NixOS boot and services", run=stage_health_check, retryable=True, skippable=True),
+    ]
 
 
 def cmd_infect(args, config):
@@ -459,59 +564,24 @@ def cmd_infect(args, config):
     if "deploy-remote" in stages:
         check_builder_key_authorized(args.host, builder)
 
-    probe = None
-    active_port = current_port
-    for stage in stages:
-        print(f"[fleet] infect stage: {stage}", file=sys.stderr)
-        if stage == "probe":
-            probe = run_infect_probe(user, target_host, active_port, args)
-        elif stage == "render-config":
-            if probe is None:
-                probe = remote_probe_json(user, target_host, active_port, args)
-            configuration, hardware = render_infect_configs(args.host, probe, args)
-            target_upload_text(user, target_host, active_port, f"{REMOTE_INFECT_DIR}/configuration.nix", configuration, timeout=args.timeout)
-            target_upload_text(user, target_host, active_port, f"{REMOTE_INFECT_DIR}/hardware-configuration.nix", hardware, timeout=args.timeout)
-            target_mark_stage(user, target_host, active_port, stage, timeout=args.timeout)
-        elif stage == "upload-config":
-            if not remote_configs_exist(user, target_host, active_port, args):
-                die("missing rendered config; run --stage render-config first")
-            target_run(
-                user,
-                target_host,
-                active_port,
-                f"install -d -m 0755 /etc/nixos; cp {REMOTE_INFECT_DIR}/configuration.nix /etc/nixos/configuration.nix; cp {REMOTE_INFECT_DIR}/hardware-configuration.nix /etc/nixos/hardware-configuration.nix",
-                timeout=args.timeout,
-            )
-            target_mark_stage(user, target_host, active_port, stage, timeout=args.timeout)
-        elif stage == "run-infect":
-            run_infect_script(user, target_host, active_port, nix_channel, args)
-        elif stage == "install-secrets":
-            install_node_age_key(user, target_host, active_port, config, args)
-        elif stage == "reboot":
-            try:
-                target_run(user, target_host, active_port, "reboot", timeout=8)
-            except subprocess.CalledProcessError:
-                pass
-            active_port = target_port
-        elif stage == "wait-ssh":
-            active_port = target_port
-            wait_for_ssh(user, target_host, active_port, args.timeout)
-        elif stage == "deploy-remote":
-            deploy_args = argparse.Namespace(
-                target=args.host,
-                builder=builder["name"],
-                port=builder.get("port"),
-                ssh_key=builder.get("ssh_key"),
-                ssh_config=builder.get("ssh_config"),
-                remote_root=builder.get("remote_root"),
-                remote_nix=builder.get("remote_nix"),
-                memory=builder.get("memory"),
-                kvm=False,
-                no_kvm=not builder.get("use_kvm", False),
-            )
-            cmd_deploy(deploy_args, config)
-        elif stage == "health-check":
-            active_port = target_port
-            infect_health_check(user, target_host, active_port, args)
-        else:  # pragma: no cover
-            die(f"unhandled stage: {stage}")
+    # Build the full stage list, then filter to the requested slice.
+    ctx = make_context("infect", args.host, args, config)
+    ctx.data["builder"] = builder
+    ctx.data["user"] = user
+    ctx.data["target_host"] = target_host
+    ctx.data["current_port"] = current_port
+    ctx.data["target_port"] = target_port
+    ctx.data["nix_channel"] = nix_channel
+
+    all_stages = _build_infect_stages(ctx)
+    stage_map = {s.name: s for s in all_stages}
+    selected = [stage_map[name] for name in stages if name in stage_map]
+
+    # infect_stage_slice already handles --stage / --stop-after / --no-reboot /
+    # --no-deploy filtering.  Pass the pre-filtered list directly; the runner
+    # only needs --restart for clearing markers.
+    runner = StageRunner(ctx)
+    runner.run_pipeline(
+        selected,
+        restart=getattr(args, "restart", False),
+    )

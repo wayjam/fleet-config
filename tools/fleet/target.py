@@ -8,6 +8,7 @@ import base64
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from common import die
@@ -85,3 +86,51 @@ def target_upload_text(user, host, port, path, text, *, mode="0644", timeout=30)
 def target_read_text(user, host, port, path, *, timeout=30):
     """Read *path* contents from the target."""
     return target_run(user, host, port, f"cat {shlex.quote(path)}", timeout=timeout, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# SSH availability helpers (reboot / reconnect)
+# ---------------------------------------------------------------------------
+
+
+def ssh_probe(user, host, port, *, timeout=8):
+    """Return ``True`` if an SSH connection to the target succeeds."""
+    result = subprocess.run(
+        [*ssh_base(user, host, port, timeout=timeout), "true"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def wait_ssh_down(user, host, port, *, timeout=120, poll_interval=3):
+    """Wait until SSH on *port* is **unreachable** (e.g. after ``reboot``).
+
+    Useful after issuing a reboot command: the old SSH session should drop,
+    and we wait until the target stops responding before polling for it to
+    come back up.  If the host is already down, returns immediately.
+    """
+    deadline = time.time() + int(timeout)
+    while time.time() < deadline:
+        if not ssh_probe(user, host, port, timeout=5):
+            return
+        time.sleep(poll_interval)
+
+
+def wait_ssh_up(user, host, port, *, timeout=600, poll_interval=5):
+    """Wait until SSH on *port* is reachable and responds.
+
+    After a reboot, call :func:`wait_ssh_down` first, then this function.
+    """
+    deadline = time.time() + int(timeout)
+    while time.time() < deadline:
+        if ssh_probe(user, host, port, timeout=8):
+            return
+        time.sleep(poll_interval)
+    die(f"timed out waiting for SSH on {user}@{host}:{port}")
+
+
+def wait_ssh_reboot(user, host, port, *, down_timeout=120, up_timeout=600):
+    """Full reboot wait: wait for SSH to go down, then come back up."""
+    wait_ssh_down(user, host, port, timeout=down_timeout)
+    wait_ssh_up(user, host, port, timeout=up_timeout)

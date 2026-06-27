@@ -15,6 +15,7 @@ from install import cmd_install
 from justfile import cmd_justfile_render
 from lxc import cmd_lxc_switch
 from misc import cmd_check, cmd_eval, cmd_fmt
+from orchestrator import add_orchestration_options
 from ports import cmd_ports
 from profile import cmd_profile
 from secret import cmd_secret
@@ -50,11 +51,13 @@ def build_parser():
     p.add_argument("target")
     p.add_argument("--builder", default="")
     add_builder_options(p)
+    add_orchestration_options(p)
     p.set_defaults(func=cmd_deploy)
 
     p = sub.add_parser("deploy-all")
     p.add_argument("--builder", default="")
     add_builder_options(p)
+    add_orchestration_options(p)
     p.set_defaults(func=cmd_deploy_all)
 
     # -- image / download-image -----------------------------------------------
@@ -62,6 +65,7 @@ def build_parser():
     p.add_argument("host")
     p.add_argument("--builder", default="")
     add_builder_options(p, include_kvm=True)
+    add_orchestration_options(p)
     p.set_defaults(func=cmd_image)
 
     p = sub.add_parser("download-image")
@@ -77,6 +81,8 @@ def build_parser():
     p.add_argument("host")
     p.add_argument("--ssh-target", default="root@localhost:22")
     p.add_argument("--kexec-syscall", action="store_true")
+    p.add_argument("--yes", action="store_true", help="skip destructive confirmation")
+    add_orchestration_options(p)
     p.set_defaults(func=cmd_install)
 
     # -- infect ---------------------------------------------------------------
@@ -95,6 +101,7 @@ def build_parser():
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--nix-channel")
     add_builder_options(p)
+    add_orchestration_options(p, skip_stage_options=True)
     p.set_defaults(func=cmd_infect)
 
     # -- lxc-switch -----------------------------------------------------------

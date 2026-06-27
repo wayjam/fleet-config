@@ -106,8 +106,7 @@
             wireguard-tools
           ];
         text = ''
-          export PYTHONPATH=${./tools}''${PYTHONPATH:+:}$PYTHONPATH
-          exec ${pkgs.python3}/bin/python3 -m fleet "$@"
+          exec ${pkgs.python3}/bin/python3 ${./tools/fleet} "$@"
         '';
       };
     in {

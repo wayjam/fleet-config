@@ -2,6 +2,9 @@
 
 Unified commands that replace the old ``image build``, ``image remote``,
 and ``image download`` subcommands.
+
+Remote non-KVM builds use :mod:`remote_job` for structured status monitoring
+and artifact verification, replacing the old pid-only heartbeat.
 """
 
 import shlex
@@ -14,49 +17,29 @@ from builder import (
     nix_ssh_env,
     remote_nix_expr,
     remote_repo_path,
-    remote_shell,
     scp_args,
     sync_to_builder,
 )
 from common import repo_path, run
+from orchestrator import RunContext, Stage, StageRunner, make_context
+from remote_job import job_remote_dir, make_job_id, start_remote_job, verify_remote_artifact, wait_remote_job
 
 
-def cmd_image(args, config):
-    """Build a disko image for *host*.
+# ---------------------------------------------------------------------------
+# Stage implementations — remote non-KVM image build
+# ---------------------------------------------------------------------------
 
-    Without ``--builder``: local ``nix build``.
-    With ``--builder``: remote build (KVM if available, ``--no-kvm`` to force
-    non-KVM).
-    """
-    if not args.builder:
-        run(["nix", "build", f".#packages.x86_64-linux.{args.host}"])
-        return
 
-    builder = apply_builder_overrides(builder_config(config, args.builder), args)
-    if args.no_kvm:
-        builder["use_kvm"] = False
+def _stage_sync(ctx: RunContext) -> None:
+    builder = ctx.data["builder"]
+    sync_to_builder(ctx.config, builder)
 
-    if builder["use_kvm"]:
-        env = nix_ssh_env(builder)
-        run(
-            [
-                "nix",
-                "build",
-                "--builders",
-                builder_spec(builder, require_kvm=True),
-                "--option",
-                "builders-use-substitutes",
-                "true",
-                "--max-jobs",
-                "0",
-                f".#packages.x86_64-linux.{args.host}",
-            ],
-            env=env,
-        )
-        return
 
-    # Non-KVM remote build via diskoImagesScript.
-    sync_to_builder(config, builder)
+def _stage_remote_build(ctx: RunContext) -> None:
+    """Start and wait for the disko image build on the builder."""
+    builder = ctx.data["builder"]
+    host = ctx.target
+    config = ctx.config
     repos = config.get("repos", {})
     public_name = repos.get("public_name", "fleet-config")
     inventory_name = repos.get("inventory_name", "fleet-inventory")
@@ -71,31 +54,114 @@ def cmd_image(args, config):
             + shlex.quote(remote_repo_path(config, node_age_key, builder))
             + " /etc/sops/age/key.txt"
         )
-    script = (
+
+    out_dir = f"{remote_root}/disko-{host}"
+    artifact_path = f"{out_dir}/main.raw"
+    job_id = make_job_id("image", host)
+
+    inner = (
         f"cd {shlex.quote(remote_root + '/' + inventory_name)}; "
         f"remote_nix={remote_nix}; "
         f"script=$($remote_nix build --print-out-paths "
         f"--override-input dotfiles path:{shlex.quote(remote_root + '/' + public_name)} "
-        f".#nixosConfigurations.{shlex.quote(args.host)}.config.system.build.diskoImagesScript); "
-        f"out_dir={shlex.quote(remote_root + '/disko-' + args.host)}; "
+        f".#nixosConfigurations.{shlex.quote(host)}.config.system.build.diskoImagesScript); "
+        f"out_dir={shlex.quote(out_dir)}; "
         f"mkdir -p \"$out_dir\"; "
         f"cd \"$out_dir\"; "
-        f"\"$script\" --build-memory {int(builder['memory'])}{node_age_key_arg} & "
-        "pid=$!; "
-        "echo \"[fleet] image build started on builder (pid=$pid)\"; "
-        "(while kill -0 \"$pid\" 2>/dev/null; do "
-        "sleep 30; "
-        "echo \"[fleet] image build still running on builder (pid=$pid)\"; "
-        "done) & "
-        "heartbeat=$!; "
-        "set +e; "
-        "wait \"$pid\"; "
-        "fleet_status=$?; "
-        "kill \"$heartbeat\" 2>/dev/null; "
-        "wait \"$heartbeat\" 2>/dev/null; "
-        "exit \"$fleet_status\""
+        f"\"$script\" --build-memory {int(builder['memory'])}{node_age_key_arg}"
     )
-    remote_shell(builder, script)
+
+    start_remote_job(builder, job_id, inner, artifact_path=artifact_path)
+    ctx.data["job_id"] = job_id
+    ctx.data["artifact_path"] = artifact_path
+
+    status = wait_remote_job(builder, job_id, poll_interval=30)
+    if not status.succeeded:
+        raise RuntimeError(
+            f"remote image build failed (exit_code={status.exit_code}); "
+            f"check logs at {job_remote_dir(builder, job_id)}/stderr.log"
+        )
+
+
+def _stage_verify_artifact(ctx: RunContext) -> None:
+    """Verify the built image exists and is non-empty."""
+    builder = ctx.data["builder"]
+    artifact_path = ctx.data["artifact_path"]
+    verify_remote_artifact(builder, artifact_path)
+
+
+def _stage_download(ctx: RunContext) -> None:
+    """Download the remote-built image via SCP."""
+    builder = ctx.data["builder"]
+    artifact_path = ctx.data["artifact_path"]
+    output_path = Path(ctx.data["output"])
+    if output_path.parent != Path("."):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    run([*scp_args(builder), f"{builder['alias']}:{artifact_path}", str(output_path)])
+
+
+# ---------------------------------------------------------------------------
+# Public command entry points
+# ---------------------------------------------------------------------------
+
+
+def cmd_image(args, config):
+    """Build a disko image for *host*.
+
+    Without ``--builder``: local ``nix build``.
+    With ``--builder``: remote build (KVM if available, ``--no-kvm`` to force
+    non-KVM).
+    """
+    if not args.builder:
+        run(["nix", "build", f".#packages.x86_64-linux.{args.host}"])
+        return
+
+    builder = apply_builder_overrides(builder_config(config, args.builder), args)
+    if getattr(args, "no_kvm", False):
+        builder["use_kvm"] = False
+
+    if builder["use_kvm"]:
+        # KVM remote build via nix build --builders (synchronous, no stages needed).
+        env = nix_ssh_env(builder)
+        run(
+            [
+                "nix", "build",
+                "--builders", builder_spec(builder, require_kvm=True),
+                "--option", "builders-use-substitutes", "true",
+                "--max-jobs", "0",
+                f".#packages.x86_64-linux.{args.host}",
+            ],
+            env=env,
+        )
+        return
+
+    # Non-KVM remote build — stage-based with structured job monitoring.
+    ctx = make_context("image", args.host, args, config)
+    ctx.data["builder"] = builder
+
+    stages = [
+        Stage(name="sync", description="sync worktree to builder", run=_stage_sync, retryable=True),
+        Stage(
+            name="remote-build",
+            description=f"build disko image for {args.host} on builder (non-KVM)",
+            run=_stage_remote_build,
+            retryable=False,
+            destructive=True,
+        ),
+        Stage(
+            name="verify-artifact",
+            description="verify main.raw exists and is non-empty",
+            run=_stage_verify_artifact,
+            retryable=True,
+        ),
+    ]
+    runner = StageRunner(ctx)
+    runner.run_pipeline(
+        stages,
+        restart=getattr(args, "restart", False),
+        from_stage=getattr(args, "from_stage", None),
+        stop_after=getattr(args, "stop_after", None),
+    )
 
 
 def cmd_download_image(args, config):

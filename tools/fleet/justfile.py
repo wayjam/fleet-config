@@ -6,7 +6,15 @@ which runs `fleet justfile render --output Justfile`.
 
 from pathlib import Path
 
-JUSTFILE_TEMPLATE = """set positional-arguments := true
+JUSTFILE_TEMPLATE = """# Orchestration flags (deploy/image/install/infect):
+#   --retry N        auto-retry failed retryable stages
+#   --from-stage X   resume from stage X (deploy/image/install)
+#   --restart        clear all stage markers before running
+#   --interactive    force interactive failure prompts (TTY default)
+#   --non-interactive  never prompt; fail with resume hint (CI default)
+#
+# Boolean recipe params (dry-run, no-kvm, kexec-syscall) accept "true"/"false".
+# Pass them as named args:  just image <host> builder=<x> no-kvm=true
 
 default:
   @just --list
@@ -25,37 +33,48 @@ eval:
 
 # Build a host system closure — `just build <host> [builder=<x>] [dry-run=true]`
 build host builder="" dry-run="false":
-  nix run .#fleet -- build {{host}} --builder {{builder}} --dry-run {{dry-run}}
+  #!/usr/bin/env bash
+  set -eu
+  args=(build "{{host}}" --builder "{{builder}}")
+  [ "{{dry-run}}" = "true" ] && args+=(--dry-run)
+  exec nix run .#fleet -- "${args[@]}"
 
 # Check SSH + nix connectivity to a remote builder — `just builder-ping [<name>]`
 builder-ping builder="":
   nix run .#fleet -- builder-ping {{builder}}
 
-# Deploy to a host (with --builder: sync worktree & apply remotely) — `just deploy <target> [builder=<x>]`
+# Deploy to a host (stages: sync→lock→apply) — `just deploy <target> [builder=<x>]`
 deploy target builder="":
   nix run .#fleet -- deploy {{target}} --builder {{builder}}
 
-# Deploy to all Colmena hosts — `just deploy-all [builder=<x>]`
+# Deploy to all Colmena hosts (stages: sync→lock→apply) — `just deploy-all [builder=<x>]`
 deploy-all builder="":
   nix run .#fleet -- deploy-all --builder {{builder}}
 
-# Build a disko image (local/remote/--no-kvm) — `just image <host> [builder=<x>] [no-kvm=true]`
+# Build a disko image (stages: sync→remote-build→verify) — `just image <host> [builder=<x>] [no-kvm=true]`
 image host builder="" no-kvm="false":
-  nix run .#fleet -- image {{host}} --builder {{builder}} --no-kvm {{no-kvm}}
+  #!/usr/bin/env bash
+  set -eu
+  args=(image "{{host}}" --builder "{{builder}}")
+  [ "{{no-kvm}}" = "true" ] && args+=(--no-kvm)
+  exec nix run .#fleet -- "${args[@]}"
 
 # Download remote-built disko image via SCP — `just download-image <host> builder=<x> [output=path]`
 download-image host builder="" output="":
   nix run .#fleet -- download-image {{host}} --builder {{builder}} --output {{output}}
 
+# Convert Debian/Ubuntu → NixOS (stages: probe→render→upload→infect→secrets→reboot→wait→deploy→health)
 #   just infect <host> [ssh-target=user@ip:22] [builder=<x>]
-# Convert Debian/Ubuntu → NixOS with nixos-infect (multi-stage pipeline).
 infect host ssh-target="root@localhost:22" builder="":
   nix run .#fleet -- infect {{host}} --ssh-target {{ssh-target}} --builder {{builder}}
 
-#   just install <host> ssh-target=root@ip:22 [kexec-syscall=true]
-# Fresh NixOS install via nixos-anywhere.
+# Fresh NixOS install via nixos-anywhere (stages: install→verify) — `just install <host> ssh-target=root@ip:22 [kexec-syscall=true]`
 install host ssh-target="root@localhost:22" kexec-syscall="false":
-  nix run .#fleet -- install {{host}} --ssh-target {{ssh-target}} --kexec-syscall {{kexec-syscall}}
+  #!/usr/bin/env bash
+  set -eu
+  args=(install "{{host}}" --ssh-target "{{ssh-target}}")
+  [ "{{kexec-syscall}}" = "true" ] && args+=(--kexec-syscall)
+  exec nix run .#fleet -- "${args[@]}"
 
 # Switch a system-manager LXC or existing Linux host — `just lxc-switch <host>`
 lxc-switch host:
@@ -69,8 +88,7 @@ ports host:
 profile host kind="":
   nix run .#fleet -- profile {{host}} --kind {{kind}}
 
-#   just secret uuid | password | hex | age | age-file <n> | wireguard | ssh <n> | xray-reality | proxy
-# Generate secrets — runs `fleet secret <args>` (see just --help for sub-commands).
+# Generate secrets — `just secret uuid | password | hex | age | age-file <n> | wireguard | ssh <n> | xray-reality | proxy`
 secret +args:
   nix run .#fleet -- secret {{args}}
 
