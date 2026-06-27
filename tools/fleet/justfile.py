@@ -13,8 +13,12 @@ JUSTFILE_TEMPLATE = """# Orchestration flags (deploy/image/install/infect):
 #   --interactive    force interactive failure prompts (TTY default)
 #   --non-interactive  never prompt; fail with resume hint (CI default)
 #
-# Boolean recipe params (dry-run, no-kvm, kexec-syscall) accept "true"/"false".
-# Pass them as named args:  just image <host> builder=<x> no-kvm=true
+# All recipe arguments are positional (just 1.x does not support key=value).
+# Boolean params (dry-run, no-kvm, kexec-syscall) accept "true"/"false".
+# Examples:
+#   just image panstar-hks builder true      # builder=builder, no-kvm=true
+#   just image panstar-hks builder           # builder=builder, no-kvm=false
+#   just build panstar-hks builder true      # builder=builder, dry-run=true
 
 default:
   @just --list
@@ -31,7 +35,7 @@ check:
 eval:
   nix run .#fleet -- eval
 
-# Build a host system closure — `just build <host> [builder=<x>] [dry-run=true]`
+# Build a host system closure — `just build <host> [builder] [dry-run]`
 build host builder="" dry-run="false":
   #!/usr/bin/env bash
   set -eu
@@ -43,15 +47,15 @@ build host builder="" dry-run="false":
 builder-ping builder="":
   nix run .#fleet -- builder-ping {{builder}}
 
-# Deploy to a host (stages: sync→lock→apply) — `just deploy <target> [builder=<x>]`
+# Deploy to a host (stages: sync→lock→apply) — `just deploy <target> [builder]`
 deploy target builder="":
   nix run .#fleet -- deploy {{target}} --builder {{builder}}
 
-# Deploy to all Colmena hosts (stages: sync→lock→apply) — `just deploy-all [builder=<x>]`
+# Deploy to all Colmena hosts (stages: sync→lock→apply) — `just deploy-all [builder]`
 deploy-all builder="":
   nix run .#fleet -- deploy-all --builder {{builder}}
 
-# Build a disko image (stages: sync→remote-build→verify) — `just image <host> [builder=<x>] [no-kvm=true]`
+# Build a disko image (stages: sync→remote-build→verify) — `just image <host> [builder] [no-kvm]`
 image host builder="" no-kvm="false":
   #!/usr/bin/env bash
   set -eu
@@ -59,16 +63,16 @@ image host builder="" no-kvm="false":
   [ "{{no-kvm}}" = "true" ] && args+=(--no-kvm)
   exec nix run .#fleet -- "${args[@]}"
 
-# Download remote-built disko image via SCP — `just download-image <host> builder=<x> [output=path]`
+# Download remote-built disko image via SCP — `just download-image <host> <builder> [output]`
 download-image host builder="" output="":
   nix run .#fleet -- download-image {{host}} --builder {{builder}} --output {{output}}
 
 # Convert Debian/Ubuntu → NixOS (stages: probe→render→upload→infect→secrets→reboot→wait→deploy→health)
-#   just infect <host> [ssh-target=user@ip:22] [builder=<x>]
+#   just infect <host> [ssh-target] [builder]
 infect host ssh-target="root@localhost:22" builder="":
   nix run .#fleet -- infect {{host}} --ssh-target {{ssh-target}} --builder {{builder}}
 
-# Fresh NixOS install via nixos-anywhere (stages: install→verify) — `just install <host> ssh-target=root@ip:22 [kexec-syscall=true]`
+# Fresh NixOS install via nixos-anywhere (stages: install→verify) — `just install <host> [ssh-target] [kexec-syscall]`
 install host ssh-target="root@localhost:22" kexec-syscall="false":
   #!/usr/bin/env bash
   set -eu
@@ -84,7 +88,7 @@ lxc-switch host:
 ports host:
   nix run .#fleet -- ports {{host}}
 
-# Show client proxy/VPN profiles (xray/hy2/wireguard) — `just profile <host> [kind=xray]`
+# Show client proxy/VPN profiles (xray/hy2/wireguard) — `just profile <host> [kind]`
 profile host kind="":
   nix run .#fleet -- profile {{host}} --kind {{kind}}
 
