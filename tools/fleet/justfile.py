@@ -6,19 +6,18 @@ which runs `fleet justfile render --output Justfile`.
 
 from pathlib import Path
 
-JUSTFILE_TEMPLATE = """# Orchestration flags (deploy/image/install/infect):
-#   --retry N        auto-retry failed retryable stages
-#   --from-stage X   resume from stage X (deploy/image/install)
-#   --restart        clear all stage markers before running
-#   --interactive    force interactive failure prompts (TTY default)
-#   --non-interactive  never prompt; fail with resume hint (CI default)
+JUSTFILE_TEMPLATE = """# Fleet Justfile shortcuts.
 #
-# All recipe arguments are positional (just 1.x does not support key=value).
-# Boolean params (dry-run, no-kvm, kexec-syscall) accept "true"/"false".
-# Examples:
-#   just image panstar-hks builder true      # builder=builder, no-kvm=true
-#   just image panstar-hks builder           # builder=builder, no-kvm=false
-#   just build panstar-hks builder true      # builder=builder, dry-run=true
+# Recipes keep only required positional arguments and pass optional flags through
+# to the Python CLI. Use normal fleet flags after the required args:
+#   just image panstar-hks --builder builder --no-kvm
+#   just image panstar-hks --builder builder --no-kvm --retry 1
+#   just deploy panstar-hks --builder builder --retry 1
+#   just install panstar-hks --ssh-target root@1.2.3.4:22 --kexec-syscall
+#
+# For full options:
+#   just image <host> --help
+#   nix run .#fleet -- image --help
 
 default:
   @just --list
@@ -35,50 +34,37 @@ check:
 eval:
   nix run .#fleet -- eval
 
-# Build a host system closure — `just build <host> [builder] [dry-run]`
-build host builder="" dry-run="false":
-  #!/usr/bin/env bash
-  set -eu
-  args=(build "{{host}}" --builder "{{builder}}")
-  [ "{{dry-run}}" = "true" ] && args+=(--dry-run)
-  exec nix run .#fleet -- "${args[@]}"
+# Build a host system closure — `just build <host> [fleet flags...]`
+build host *args:
+  nix run .#fleet -- build {{host}} {{args}}
 
-# Check SSH + nix connectivity to a remote builder — `just builder-ping [<name>]`
-builder-ping builder="":
-  nix run .#fleet -- builder-ping {{builder}}
+# Check SSH + nix connectivity to a remote builder — `just builder-ping [builder] [fleet flags...]`
+builder-ping *args:
+  nix run .#fleet -- builder-ping {{args}}
 
-# Deploy to a host (stages: sync→lock→apply) — `just deploy <target> [builder]`
-deploy target builder="":
-  nix run .#fleet -- deploy {{target}} --builder {{builder}}
+# Deploy to a host (stages: sync→lock→apply) — `just deploy <target> [fleet flags...]`
+deploy target *args:
+  nix run .#fleet -- deploy {{target}} {{args}}
 
-# Deploy to all Colmena hosts (stages: sync→lock→apply) — `just deploy-all [builder]`
-deploy-all builder="":
-  nix run .#fleet -- deploy-all --builder {{builder}}
+# Deploy to all Colmena hosts (stages: sync→lock→apply) — `just deploy-all [fleet flags...]`
+deploy-all *args:
+  nix run .#fleet -- deploy-all {{args}}
 
-# Build a disko image (stages: sync→remote-build→verify) — `just image <host> [builder] [no-kvm]`
-image host builder="" no-kvm="false":
-  #!/usr/bin/env bash
-  set -eu
-  args=(image "{{host}}" --builder "{{builder}}")
-  [ "{{no-kvm}}" = "true" ] && args+=(--no-kvm)
-  exec nix run .#fleet -- "${args[@]}"
+# Build a disko image (stages: sync→remote-build→verify) — `just image <host> [fleet flags...]`
+image host *args:
+  nix run .#fleet -- image {{host}} {{args}}
 
-# Download remote-built disko image via SCP — `just download-image <host> <builder> [output]`
-download-image host builder="" output="":
-  nix run .#fleet -- download-image {{host}} --builder {{builder}} --output {{output}}
+# Download remote-built disko image via SCP — `just download-image <host> [fleet flags...]`
+download-image host *args:
+  nix run .#fleet -- download-image {{host}} {{args}}
 
 # Convert Debian/Ubuntu → NixOS (stages: probe→render→upload→infect→secrets→reboot→wait→deploy→health)
-#   just infect <host> [ssh-target] [builder]
-infect host ssh-target="root@localhost:22" builder="":
-  nix run .#fleet -- infect {{host}} --ssh-target {{ssh-target}} --builder {{builder}}
+infect host *args:
+  nix run .#fleet -- infect {{host}} {{args}}
 
-# Fresh NixOS install via nixos-anywhere (stages: install→verify) — `just install <host> [ssh-target] [kexec-syscall]`
-install host ssh-target="root@localhost:22" kexec-syscall="false":
-  #!/usr/bin/env bash
-  set -eu
-  args=(install "{{host}}" --ssh-target "{{ssh-target}}")
-  [ "{{kexec-syscall}}" = "true" ] && args+=(--kexec-syscall)
-  exec nix run .#fleet -- "${args[@]}"
+# Fresh NixOS install via nixos-anywhere (stages: install→verify) — `just install <host> [fleet flags...]`
+install host *args:
+  nix run .#fleet -- install {{host}} {{args}}
 
 # Switch a system-manager LXC or existing Linux host — `just lxc-switch <host>`
 lxc-switch host:
@@ -88,9 +74,9 @@ lxc-switch host:
 ports host:
   nix run .#fleet -- ports {{host}}
 
-# Show client proxy/VPN profiles (xray/hy2/wireguard) — `just profile <host> [kind]`
-profile host kind="":
-  nix run .#fleet -- profile {{host}} --kind {{kind}}
+# Show client proxy/VPN profiles — `just profile <host> [fleet flags...]`
+profile host *args:
+  nix run .#fleet -- profile {{host}} {{args}}
 
 # Generate secrets — `just secret uuid | password | hex | age | age-file <n> | wireguard | ssh <n> | xray-reality | proxy`
 secret +args:
