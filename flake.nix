@@ -89,30 +89,25 @@
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
       isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
-      secretGen = pkgs.writeShellApplication {
-        name = "secret-gen";
+      fleet = pkgs.writeShellApplication {
+        name = "fleet";
         runtimeInputs = with pkgs;
           [
             age
+            gnutar
+            nix
             openssh
             openssl
+            sops
+            ssh-to-age
             xray
           ]
           ++ lib.optionals (!isDarwin) [
             wireguard-tools
           ];
-        text = builtins.readFile ./tools/secret-gen;
-      };
-      fleet = pkgs.writeShellApplication {
-        name = "fleet";
-        runtimeInputs = with pkgs; [
-          gnutar
-          nix
-          openssh
-          sops
-        ];
         text = ''
-          exec ${pkgs.python3}/bin/python3 ${./tools/fleet} "$@"
+          export PYTHONPATH=${./tools}''${PYTHONPATH:+:}$PYTHONPATH
+          exec ${pkgs.python3}/bin/python3 -m fleet "$@"
         '';
       };
     in {
@@ -122,10 +117,6 @@
         fleet = {
           type = "app";
           program = "${fleet}/bin/fleet";
-        };
-        secret-gen = {
-          type = "app";
-          program = "${secretGen}/bin/secret-gen";
         };
       };
     })

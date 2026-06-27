@@ -68,8 +68,6 @@ in rec {
         program = "${appPkgs.nixos-anywhere}/bin/nixos-anywhere";
       };
 
-      secret-gen = inputs.dotfiles.apps.${appSystem}.secret-gen;
-
       fleet = inputs.dotfiles.apps.${appSystem}.fleet;
     });
 

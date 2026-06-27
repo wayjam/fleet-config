@@ -1,4 +1,12 @@
-set positional-arguments := true
+"""`fleet justfile render` — emit the Justfile template (source of truth).
+
+The generated Justfile in fleet-inventory is produced by `just update-justfile`,
+which runs `fleet justfile render --output Justfile`.
+"""
+
+from pathlib import Path
+
+JUSTFILE_TEMPLATE = """set positional-arguments := true
 
 default:
   @just --list
@@ -69,3 +77,12 @@ secret +args:
 # Regenerate this Justfile from the fleet template (source of truth).
 update-justfile:
   nix run --refresh .#fleet -- justfile render --output Justfile
+"""
+
+
+def cmd_justfile_render(args, _config):
+    if args.output == "-":
+        print(JUSTFILE_TEMPLATE, end="")
+        return
+    Path(args.output).write_text(JUSTFILE_TEMPLATE)
+    print(f"wrote {args.output}")
