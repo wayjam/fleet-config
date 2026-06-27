@@ -9,6 +9,12 @@
   users.users.root = lib.mkIf (myvars.hashedPassword != null) {
     hashedPassword = myvars.hashedPassword;
   };
+  users.users.${myvars.userName} = {
+    isNormalUser = true;
+    group = myvars.userName;
+    extraGroups = ["wheel"];
+  };
+  users.groups.${myvars.userName} = {};
   users.allowNoPasswordLogin = lib.mkDefault (myvars.hashedPassword == null && myvars.sshAuthorizedKeys == []);
 
   my.server.ssh = {

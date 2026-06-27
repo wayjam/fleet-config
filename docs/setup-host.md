@@ -73,7 +73,7 @@ Minimal KVM host shape:
 in {
   imports = [
     inputs.sops-nix.nixosModules.sops
-    inputs.dotfiles.nixosModules.kvm-host
+    inputs.dotfiles.nixosModules.profiles-kvm-server
 
     # Import optional service modules only when this host uses them.
     inputs.dotfiles.nixosModules.proxy-xray
@@ -331,7 +331,7 @@ Minimal disko image shape:
 ```nix
 imports = [
   inputs.disko.nixosModules.disko
-  inputs.dotfiles.nixosModules.kvm-host
+  inputs.dotfiles.nixosModules.profiles-kvm-server
 ];
 
 disko = {

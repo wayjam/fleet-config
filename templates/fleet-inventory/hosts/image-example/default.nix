@@ -8,7 +8,7 @@
 in {
   imports = [
     inputs.disko.nixosModules.disko
-    inputs.dotfiles.nixosModules.kvm-host
+    inputs.dotfiles.nixosModules.profiles-kvm-server
     inputs.dotfiles.nixosModules.proxy-realm
   ];
 

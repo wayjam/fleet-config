@@ -48,7 +48,6 @@
           nixpkgs = inputs.nixpkgs;
           nixSystem = inputs.nixpkgs.lib.nixosSystem;
           modules = [
-            inputs.home-manager.nixosModules.home-manager
             ./modules/nixos # 路径相对于 utils.nix
           ];
         };
@@ -92,8 +91,8 @@
       }
       // hostConfig.root;
 
-    homeManagerModules = [
-      ({config, ...}: {
+    homeManagerModules = lib.optionals isDarwin [
+      ({...}: {
         home-manager = {
           backupFileExtension = "backup";
           useGlobalPkgs = true;
@@ -114,7 +113,7 @@
 
       specialArgs = {
         inherit (specifics) nixpkgs;
-        inherit isDarwin hostName lib;
+        inherit inputs isDarwin hostName lib;
         inherit (hostConfig) myvars;
         # 通过 inputs 访问
         impermanence = inputs.impermanence;

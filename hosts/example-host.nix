@@ -30,7 +30,7 @@ in {
     ...
   }: {
     imports = [
-      ../modules/nixos/profiles/kvm-host.nix
+      ../modules/nixos/profiles/kvm-server.nix
       ../modules/shared/proxy/xray.nix
       ../modules/shared/proxy/hy2.nix
       ../modules/shared/proxy/realm.nix
@@ -39,6 +39,12 @@ in {
     ];
 
     networking.hostName = hostName;
+    users.users.${myvars.userName} = {
+      isNormalUser = true;
+      group = myvars.userName;
+      extraGroups = ["wheel"];
+    };
+    users.groups.${myvars.userName} = {};
     users.allowNoPasswordLogin = true;
 
     my.server.ssh = {

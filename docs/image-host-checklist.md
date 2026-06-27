@@ -148,7 +148,7 @@ For raw image hosts, import disko and set a stable partition label:
 imports = [
   inputs.disko.nixosModules.disko
   inputs.sops-nix.nixosModules.sops
-  inputs.dotfiles.nixosModules.kvm-host
+  inputs.dotfiles.nixosModules.profiles-kvm-server
 ];
 
 disko = {

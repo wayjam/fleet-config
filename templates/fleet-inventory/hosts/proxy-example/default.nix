@@ -8,7 +8,7 @@
 in {
   imports = [
     inputs.sops-nix.nixosModules.sops
-    inputs.dotfiles.nixosModules.kvm-host
+    inputs.dotfiles.nixosModules.profiles-kvm-server
     inputs.dotfiles.nixosModules.proxy-xray
     inputs.dotfiles.nixosModules.proxy-realm
     inputs.dotfiles.nixosModules.monitoring-komari-agent

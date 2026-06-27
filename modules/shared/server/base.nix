@@ -16,22 +16,22 @@ in {
         curl
         wget
         rsync
-        logrotate
-        tcpdump
-        mtr
-        findutils
+        xz
+        zstd
         gnugrep
         gnused
         gawk
         gnutar
-        xz
-        zstd
         python3
         vim
         git
         htop
         jq
         lsof
+        tcpdump
+        mtr
+        sudo
+        zsh
       ];
       description = "Base packages installed on managed hosts.";
     };
@@ -42,7 +42,7 @@ in {
       environment.systemPackages = cfg.packages;
 
       nix.settings = {
-        experimental-features = ["nix-command" "flakes"];
+        experimental-features = lib.mkDefault ["nix-command" "flakes"];
         builders-use-substitutes = lib.mkDefault true;
       };
     }

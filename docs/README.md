@@ -69,8 +69,11 @@ Important paths:
 
 Main host profiles:
 
-- `nixosModules.kvm-host`: common NixOS base profile for KVM hosts. It includes
-  SSH, firewall, fail2ban, and server tuning.
+- `nixosModules.profiles-server`: common NixOS server profile with operational
+  tools and documentation disabled.
+- `nixosModules.profiles-kvm-server`: server profile plus KVM/cloud host
+  modules such as disk expansion support.
+- `nixosModules.profiles-builder`: KVM server profile plus remote builder tools.
 - `systemManagerModules.lxc-host`: common profile for LXC or other non-NixOS
   hosts with Nix installed.
 
@@ -112,7 +115,7 @@ A private inventory imports public modules and adds real deployment data:
 
       "proxy-example" = {
         imports = [
-          dotfiles.nixosModules.kvm-host
+          dotfiles.nixosModules.profiles-kvm-server
           dotfiles.nixosModules.proxy-xray
           ./hosts/proxy-example
         ];

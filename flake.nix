@@ -1,5 +1,5 @@
 {
-  description = "Nix configuration for wayjam";
+  description = "Nix configuration for fleet";
 
   # the nixConfig here only affects the flake itself, not the system configuration!
   nixConfig = {
@@ -153,9 +153,9 @@
 
       nixosModules = {
         default = ./modules/nixos;
-        kvm-host = ./modules/nixos/profiles/kvm-host.nix;
-        server-base = ./modules/shared/server/base.nix;
-        server-firewall-options = ./modules/shared/server/firewall-options.nix;
+        profiles-server = ./modules/nixos/profiles/server.nix;
+        profiles-kvm-server = ./modules/nixos/profiles/kvm-server.nix;
+        profiles-builder = ./modules/nixos/profiles/builder.nix;
         server-ssh = ./modules/nixos/server/ssh.nix;
         server-firewall = ./modules/nixos/server/firewall.nix;
         server-fail2ban = ./modules/nixos/server/fail2ban.nix;

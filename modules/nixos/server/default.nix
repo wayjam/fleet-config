@@ -1,5 +1,5 @@
 {...}: {
   imports = [
-    ../profiles/kvm-host.nix
+    ../profiles/kvm-server.nix
   ];
 }

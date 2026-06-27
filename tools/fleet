@@ -561,14 +561,21 @@ def normalize_ssh_target(value, default_user="root"):
 
 
 def target_ssh_base(user, host, port, *, timeout=30):
+    ssh_bin = "/usr/bin/ssh" if Path("/usr/bin/ssh").exists() else "ssh"
     return [
-        "ssh",
+        ssh_bin,
+        "-o",
+        "BatchMode=yes",
         "-o",
         "StrictHostKeyChecking=accept-new",
         "-o",
         f"ConnectTimeout={int(timeout)}",
         "-o",
         "ConnectionAttempts=1",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=4",
         "-p",
         str(port),
         f"{user}@{host}",
@@ -706,7 +713,10 @@ def render_infect_configs(host, probe, args):
     target_port = args.target_port or int(host_deployment(host).get("targetPort", 2234))
     state_version = eval_host_raw(host, "system.stateVersion", "25.05")
     kernel_params = eval_host_json(host, "boot.kernelParams", [])
-    grub_device = eval_host_raw(host, "boot.loader.grub.device", probe.get("disk") or "/dev/sda")
+    grub_devices = eval_host_json(host, "boot.loader.grub.devices", [])
+    if not grub_devices:
+        legacy_grub_device = eval_host_raw(host, "boot.loader.grub.device", "")
+        grub_devices = [legacy_grub_device or probe.get("disk") or "/dev/sda"]
     initrd_modules = detect_initrd_modules(host)
     root_device = f"/dev/disk/by-uuid/{probe['root_uuid']}" if probe.get("root_uuid") else probe["root_source"]
     root_fs = probe.get("root_fs") or "ext4"
@@ -726,7 +736,7 @@ def render_infect_configs(host, probe, args):
   boot.kernelParams = {nix_list(kernel_params)};
   boot.initrd.availableKernelModules = {nix_list(initrd_modules)};
   boot.initrd.kernelModules = {nix_list(eval_host_json(host, "boot.initrd.kernelModules", []))};
-  {("boot.loader.grub.device = " + nix_string(grub_device) + ";") if not is_uefi else 'boot.loader.grub.device = "nodev";'}
+  {("boot.loader.grub.devices = " + nix_list(grub_devices) + ";") if not is_uefi else 'boot.loader.grub.devices = [ "nodev" ];'}
   {('boot.loader.efi.efiSysMountPoint = ' + nix_string(esp_mount) + ';\n  boot.loader.grub.efiSupport = true;\n  boot.loader.grub.efiInstallAsRemovable = true;') if is_uefi else ''}
 
   {build_networking_nix(probe, host)}
