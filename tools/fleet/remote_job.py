@@ -159,26 +159,36 @@ def _read_remote_file(builder: dict, path: str, default: str = "") -> str:
 
 
 def poll_remote_job(builder: dict, job_id: str) -> RemoteJobStatus:
-    """Read the current status of *job_id* from the builder."""
+    """Read the current status of *job_id* from the builder in a single SSH call."""
     job_dir = job_remote_dir(builder, job_id)
-    state = _read_remote_file(builder, f"{job_dir}/state", "running")
-    if not state:
-        state = "running"
+    # Read all status files in one SSH session to avoid 7 round-trips.
+    script = (
+        f"state=$(cat {shlex.quote(job_dir)}/state 2>/dev/null || echo running); "
+        f"exit_code=$(cat {shlex.quote(job_dir)}/exit-code 2>/dev/null || echo); "
+        f"started_at=$(cat {shlex.quote(job_dir)}/started-at 2>/dev/null || echo); "
+        f"finished_at=$(cat {shlex.quote(job_dir)}/finished-at 2>/dev/null || echo); "
+        f"artifact_path=$(cat {shlex.quote(job_dir)}/artifact-path 2>/dev/null || echo); "
+        f"artifact_size=$(cat {shlex.quote(job_dir)}/artifact-size 2>/dev/null || echo); "
+        f"artifact_sha=$(cat {shlex.quote(job_dir)}/artifact-sha256 2>/dev/null || echo); "
+        f'printf \'%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n\' "$state" "$exit_code" "$started_at" "$finished_at" "$artifact_path" "$artifact_size" "$artifact_sha"'
+    )
+    try:
+        output = capture([*ssh_args(builder), script])
+    except Exception:
+        return RemoteJobStatus(job_id=job_id, state="running", exit_code=None, started_at="", finished_at=None)
 
-    exit_code_raw = _read_remote_file(builder, f"{job_dir}/exit-code", "")
+    lines = output.splitlines()
+    state = lines[0].strip() if len(lines) > 0 and lines[0].strip() else "running"
+    exit_code_raw = lines[1].strip() if len(lines) > 1 else ""
     exit_code = int(exit_code_raw) if exit_code_raw.lstrip("-").isdigit() else None
-
-    started_at = _read_remote_file(builder, f"{job_dir}/started-at", "")
-    finished_at_raw = _read_remote_file(builder, f"{job_dir}/finished-at", "")
+    started_at = lines[2].strip() if len(lines) > 2 else ""
+    finished_at_raw = lines[3].strip() if len(lines) > 3 else ""
     finished_at = finished_at_raw if finished_at_raw else None
-
-    artifact_path_raw = _read_remote_file(builder, f"{job_dir}/artifact-path", "")
+    artifact_path_raw = lines[4].strip() if len(lines) > 4 else ""
     artifact_path = artifact_path_raw if artifact_path_raw else None
-
-    artifact_size_raw = _read_remote_file(builder, f"{job_dir}/artifact-size", "")
+    artifact_size_raw = lines[5].strip() if len(lines) > 5 else ""
     artifact_size = int(artifact_size_raw) if artifact_size_raw.isdigit() else None
-
-    artifact_sha = _read_remote_file(builder, f"{job_dir}/artifact-sha256", "")
+    artifact_sha = lines[6].strip() if len(lines) > 6 else ""
     artifact_sha256 = artifact_sha if artifact_sha else None
 
     return RemoteJobStatus(
@@ -191,6 +201,36 @@ def poll_remote_job(builder: dict, job_id: str) -> RemoteJobStatus:
         artifact_size=artifact_size,
         artifact_sha256=artifact_sha256,
     )
+
+
+def list_remote_jobs_status(builder: dict) -> list[tuple[str, str, int | None]]:
+    """List all jobs with their state and exit code in a single SSH call.
+
+    Returns a list of ``(job_id, state, exit_code)`` tuples.
+    """
+    jobs_root = f"{builder['remote_root']}/.fleet/jobs"
+    script = (
+        f"for d in {shlex.quote(jobs_root)}/*/; do "
+        f'  [ -d "$d" ] || continue; '
+        f'  job_id=$(basename "$d"); '
+        f'  state=$(cat "$d/state" 2>/dev/null || echo "unknown"); '
+        f'  exit_code=$(cat "$d/exit-code" 2>/dev/null || echo "-"); '
+        f'  printf \'%s\\t%s\\t%s\\n\' "$job_id" "$state" "$exit_code"; '
+        f"done"
+    )
+    try:
+        result = capture([*ssh_args(builder), script])
+    except Exception:
+        return []
+
+    jobs = []
+    for line in result.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[0].strip():
+            ec_raw = parts[2].strip()
+            ec = int(ec_raw) if ec_raw.lstrip("-").isdigit() else None
+            jobs.append((parts[0].strip(), parts[1].strip(), ec))
+    return jobs
 
 
 def wait_remote_job(builder: dict, job_id: str, *, poll_interval: int = 30, timeout: int | None = None) -> RemoteJobStatus:

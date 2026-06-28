@@ -9,7 +9,7 @@ from remote_job import (
     cancel_remote_job,
     cleanup_remote_jobs,
     job_remote_dir,
-    list_remote_jobs,
+    list_remote_jobs_status,
     poll_remote_job,
     fetch_job_log_tail,
 )
@@ -38,13 +38,12 @@ def cmd_jobs(args, config):
 
 def _jobs_list(args, config):
     builder = _get_builder(args, config)
-    jobs = list_remote_jobs(builder)
+    jobs = list_remote_jobs_status(builder)
     if not jobs:
         print("(no jobs)", file=sys.stderr)
         return
-    for job_id in jobs:
-        status = poll_remote_job(builder, job_id)
-        print(f"  {job_id:40s}  {status.state:10s}  exit={status.exit_code}", file=sys.stderr)
+    for job_id, state, exit_code in jobs:
+        print(f"  {job_id:40s}  {state:10s}  exit={exit_code}", file=sys.stderr)
 
 
 def _jobs_status(args, config):
