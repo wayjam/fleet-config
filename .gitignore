@@ -77,3 +77,5 @@ profile
 __pycache__/
 *.py[codz]
 *$py.class
+# Fleet runtime state (stage markers, logs, job cache)
+.fleet/
