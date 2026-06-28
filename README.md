@@ -47,7 +47,7 @@ Expected local workspace:
 
 - Public NixOS and system-manager modules for KVM hosts, LXC hosts, proxy
   services, monitoring, Caddy, WireGuard, SSH, firewall, fail2ban, and tuning.
-- Helper apps such as `fleet` and `secret-gen`.
+- Helper apps such as `fleet`.
 - `lib.hostInventory`, used by the private inventory to generate host outputs.
 - A development shell with the tools needed to work on this repository.
 - A sanitized `templates/fleet-inventory` skeleton for the private repo.

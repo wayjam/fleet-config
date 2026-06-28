@@ -49,9 +49,41 @@
       };
 
       transport = lib.mkOption {
-        type = lib.types.enum ["tcp" "grpc" "ws" "httpupgrade"];
+        type = lib.types.enum ["tcp" "grpc" "ws" "httpupgrade" "xhttp"];
         default = "tcp";
         description = "VLESS transport type.";
+      };
+
+      xhttp = {
+        path = lib.mkOption {
+          type = lib.types.str;
+          default = "";
+          description = "Plain xHTTP path. Prefer pathFile for production secrets.";
+        };
+
+        pathFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Runtime file containing the xHTTP path.";
+        };
+
+        host = lib.mkOption {
+          type = lib.types.str;
+          default = "";
+          description = "Optional xHTTP host setting.";
+        };
+
+        mode = lib.mkOption {
+          type = lib.types.str;
+          default = "auto";
+          description = "xHTTP mode.";
+        };
+
+        settings = lib.mkOption {
+          type = with lib.types; attrsOf anything;
+          default = {};
+          description = "Raw xHTTP settings merged before first-class xHTTP options.";
+        };
       };
 
       reality = {
@@ -104,7 +136,8 @@
 
   renderInbound = name: inbound: {
     inherit name;
-    inherit (inbound)
+    inherit
+      (inbound)
       type
       tag
       listenAddress
@@ -112,7 +145,8 @@
       flow
       transport
       method
-      network;
+      network
+      ;
     uuidFile =
       if inbound.uuidFile == null
       then ""
@@ -121,6 +155,13 @@
       if inbound.passwordFile == null
       then ""
       else inbound.passwordFile;
+    xhttp = {
+      inherit (inbound.xhttp) path host mode settings;
+      pathFile =
+        if inbound.xhttp.pathFile == null
+        then ""
+        else inbound.xhttp.pathFile;
+    };
     reality = {
       inherit (inbound.reality) enable dest serverNames shortIds;
       privateKeyFile =
@@ -189,6 +230,21 @@
               "shortIds": source["reality"]["shortIds"],
             },
           }
+
+        if source["transport"] == "xhttp":
+          xhttp = source["xhttp"]
+          xhttp_settings = dict(xhttp["settings"])
+
+          path = xhttp["path"]
+          if xhttp["pathFile"]:
+            path = Path(xhttp["pathFile"]).read_text().strip()
+          if path:
+            xhttp_settings["path"] = path
+          if xhttp["host"]:
+            xhttp_settings["host"] = xhttp["host"]
+          xhttp_settings["mode"] = xhttp["mode"]
+
+          stream_settings["xhttpSettings"] = xhttp_settings
 
         inbounds.append({
           "tag": source["tag"],
@@ -282,6 +338,16 @@ in {
             {
               assertion = inbound.type != "vless" || (! inbound.reality.enable) || inbound.reality.privateKeyFile != null;
               message = "my.proxy.xray.inbounds.${name}.reality.privateKeyFile is required when Reality is enabled.";
+            }
+            {
+              assertion =
+                inbound.type
+                != "vless"
+                || inbound.transport != "xhttp"
+                || inbound.xhttp.pathFile != null
+                || inbound.xhttp.path != ""
+                || inbound.xhttp.settings ? path;
+              message = "my.proxy.xray.inbounds.${name}.xhttp.pathFile, xhttp.path, or xhttp.settings.path is required when transport is xhttp.";
             }
             {
               assertion = inbound.type != "shadowsocks" || inbound.passwordFile != null;

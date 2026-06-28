@@ -111,6 +111,7 @@ in {
   sops.defaultSopsFile = ../../secrets/jp-proxy-01.yaml;
   sops.secrets.xray_uuid = {};
   sops.secrets.xray_reality_private_key = {};
+  sops.secrets.xray_xhttp_path = {};
   sops.secrets.xray_ss2022_password = {};
   sops.secrets.komari_agent_token = {};
   sops.secrets.wg_private_key = {};
@@ -139,6 +140,8 @@ my.proxy.xray = {
     listenPort = 443;
     uuidFile = config.sops.secrets.xray_uuid.path;
     flow = "xtls-rprx-vision";
+    transport = "xhttp";
+    xhttp.pathFile = config.sops.secrets.xray_xhttp_path.path;
     reality = {
       enable = true;
       privateKeyFile = config.sops.secrets.xray_reality_private_key.path;
@@ -206,10 +209,11 @@ my.vpn.wireguard = {
 Generate secret values with the private inventory helper recipes:
 
 ```shell
-just secret-uuid
-just secret-xray-reality
-just secret-password length=16 mode=ss2022
-just secret-wireguard
+just secret uuid
+just secret xray-reality
+just secret password --length 16 --mode ss2022
+just secret randstr --prefix /
+just secret wireguard
 ```
 
 Create and edit the encrypted host file:
@@ -224,6 +228,7 @@ Example encrypted data shape before sops encryption:
 ```yaml
 xray_uuid: generated-uuid
 xray_reality_private_key: generated-reality-private-key
+xray_xhttp_path: /generated-xhttp-path
 xray_ss2022_password: generated-ss2022-password
 wg_private_key: generated-wireguard-private-key
 ```

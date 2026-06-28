@@ -7,7 +7,6 @@ Replaces the former bash `secret-gen` script.  Uses stdlib (`os.urandom`,
 
 import os
 import re
-import secrets
 import subprocess
 import uuid as _uuid
 from pathlib import Path
@@ -80,6 +79,11 @@ def gen_hex(nbytes=32):
     return subprocess.check_output(["openssl", "rand", "-hex", str(nbytes)], text=True).strip()
 
 
+def gen_randstr(nbytes=16, prefix=""):
+    nbytes = _positive_int(nbytes, "byte count")
+    return f"{prefix}{_rand_hex(nbytes)}"
+
+
 def gen_xray_shortid(nbytes=8):
     nbytes = _positive_int(nbytes, "shortId byte count")
     if nbytes > 8:
@@ -146,6 +150,7 @@ def gen_proxy_bundle():
     """Print a bundle of proxy-related secrets."""
     print(f"xray_uuid: {gen_uuid()}")
     print(f"xray_ss2022_password: {gen_password(16, 'ss2022')}")
+    print(f"xray_xhttp_path: {gen_randstr(16, '/')}")
     print(f"hy2_password: {gen_password(32)}")
     print(f"xray_short_id: {gen_xray_shortid(8)}")
     if which("xray"):
@@ -162,6 +167,7 @@ _SECRET_COMMANDS = {
     "uuid": lambda args, config: print(gen_uuid()),
     "password": lambda args, config: print(gen_password(args.length, args.mode)),
     "hex": lambda args, config: print(gen_hex(args.bytes)),
+    "randstr": lambda args, config: print(gen_randstr(args.bytes, args.prefix)),
     "xray-shortid": lambda args, config: print(gen_xray_shortid(args.bytes)),
     "xray-reality": lambda args, config: print(gen_xray_reality()),
     "age": lambda args, config: print(gen_age_keypair()),

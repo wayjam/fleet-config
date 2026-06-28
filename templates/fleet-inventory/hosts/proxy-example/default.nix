@@ -20,6 +20,7 @@ in {
   sops.defaultSopsFile = ../../secrets/proxy-example.yaml;
   sops.secrets.xray_uuid = {};
   sops.secrets.xray_reality_private_key = {};
+  sops.secrets.xray_xhttp_path = {};
   sops.secrets.komari_agent_token = {};
   sops.secrets.wg_private_key = {};
 
@@ -54,6 +55,8 @@ in {
       listenPort = 443;
       uuidFile = config.sops.secrets.xray_uuid.path;
       flow = "xtls-rprx-vision";
+      transport = "xhttp";
+      xhttp.pathFile = config.sops.secrets.xray_xhttp_path.path;
       reality = {
         enable = true;
         privateKeyFile = config.sops.secrets.xray_reality_private_key.path;

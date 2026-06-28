@@ -48,7 +48,7 @@ just eval
 just deploy proxy-example
 just image image-example
 just lxc-switch lxc-example
-just secret-proxy
+just secret proxy
 just profile proxy-example
 ```
 
@@ -66,16 +66,17 @@ nix run .#fleet -- profile proxy-example --host proxy.example.com --name proxy
 The command reads Xray, HY2, and WireGuard connection details from the Nix host
 configuration, then reads client-facing secrets from `secrets/<host>.yaml`.
 Xray profiles include URI plus port, transport, Reality SNI, shortId, and other
-details. HY2 profiles include port, SNI, TLS, masquerade, and a `hysteria2://`
-URI. WireGuard profiles show interface addresses, listen port, public key when
-`wg` is available locally, and peers.
+details, including xHTTP path and mode when configured. HY2 profiles include
+port, SNI, TLS, masquerade, and a `hysteria2://` URI. WireGuard profiles show
+interface addresses, listen port, public key when `wg` is available locally, and
+peers.
 
 ## Secrets
 
 Generate an age key for local editing:
 
 ```shell
-just secret-age-file admin
+just secret age-file admin
 ```
 
 Replace the age recipient in `.sops.yaml`, then create encrypted host secrets:

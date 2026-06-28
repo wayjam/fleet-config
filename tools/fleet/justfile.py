@@ -82,7 +82,7 @@ profile host *args:
 jobs *args:
   nix run .#fleet -- jobs {{args}}
 
-# Generate secrets — `just secret uuid | password | hex | age | age-file <n> | wireguard | ssh <n> | xray-reality | proxy`
+# Generate secrets — `just secret uuid | password | hex | randstr | age | age-file <n> | wireguard | ssh <n> | xray-reality | proxy`
 secret +args:
   nix run .#fleet -- secret {{args}}
 

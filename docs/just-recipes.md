@@ -10,11 +10,11 @@ cd ../fleet-inventory
 just --list
 ```
 
-Prefer named Just arguments for optional values:
+Pass Fleet flags after the required Just arguments:
 
 ```shell
-just secret-password length=16 mode=ss2022
-just image-download aws-jp1 output=main.raw
+just secret password --length 16 --mode ss2022
+just download-image aws-jp1 --output main.raw
 ```
 
 ## Validation And Build
@@ -242,89 +242,98 @@ just lxc-switch lxc-example
 
 ## Secrets
 
-### `just secret-uuid`
+### `just secret uuid`
 
 Generate a UUID.
 
 ```shell
-just secret-uuid
+just secret uuid
 ```
 
-### `just secret-password [length] [mode]`
+### `just secret password [flags]`
 
 Generate a random password using the flag-based fleet CLI.
 
 `mode` is `plain` or `ss2022`.
 
 ```shell
-just secret-password
-just secret-password length=16 mode=ss2022
+just secret password
+just secret password --length 16 --mode ss2022
 ```
 
-### `just secret-hex [bytes]`
+### `just secret hex [flags]`
 
 Generate random hex.
 
 ```shell
-just secret-hex
-just secret-hex bytes=16
+just secret hex
+just secret hex --bytes 16
 ```
 
-### `just secret-xray-shortid [bytes]`
+### `just secret randstr [flags]`
+
+Generate a reusable random hex string. Use `--prefix /` for xHTTP paths.
+
+```shell
+just secret randstr
+just secret randstr --bytes 16 --prefix /
+```
+
+### `just secret xray-shortid [flags]`
 
 Generate an Xray Reality shortId.
 
 ```shell
-just secret-xray-shortid
-just secret-xray-shortid bytes=8
+just secret xray-shortid
+just secret xray-shortid --bytes 8
 ```
 
-### `just secret-xray-reality`
+### `just secret xray-reality`
 
 Generate an Xray Reality keypair.
 
 ```shell
-just secret-xray-reality
+just secret xray-reality
 ```
 
-### `just secret-age`
+### `just secret age`
 
 Print an age keypair.
 
 ```shell
-just secret-age
+just secret age
 ```
 
-### `just secret-age-file <name>`
+### `just secret age-file <name>`
 
 Create a local age key file under `local/keys` when `name` has no slash.
 
 ```shell
-just secret-age-file admin
+just secret age-file admin
 ```
 
-### `just secret-wireguard`
+### `just secret wireguard`
 
 Generate a WireGuard keypair.
 
 ```shell
-just secret-wireguard
+just secret wireguard
 ```
 
-### `just secret-ssh <name> [comment]`
+### `just secret ssh <name> [flags]`
 
 Generate an SSH ed25519 keypair under `local/keys` when `name` has no slash.
 
 ```shell
-just secret-ssh admin comment=operator@example.invalid
+just secret ssh admin --comment operator@example.invalid
 ```
 
-### `just secret-proxy`
+### `just secret proxy`
 
 Generate a proxy secret bundle.
 
 ```shell
-just secret-proxy
+just secret proxy
 ```
 
 ## Maintenance

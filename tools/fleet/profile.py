@@ -49,6 +49,32 @@ def wireguard_interfaces(host):
     return maybe_nix_eval_json(f".#nixosConfigurations.{host}.config.my.vpn.wireguard.interfaces") or {}
 
 
+def xhttp_profile_settings(host, inbound_name, inbound, secrets):
+    xhttp = inbound.get("xhttp") or {}
+    settings = dict(xhttp.get("settings") or {})
+
+    path = xhttp.get("path") or settings.get("path") or ""
+    path_file = xhttp.get("pathFile")
+    if path_file:
+        path = secret_value(secrets, path_file, f"{host}.{inbound_name}.xhttp")
+    if path:
+        settings["path"] = path
+
+    host_name = xhttp.get("host") or settings.get("host") or ""
+    if host_name:
+        settings["host"] = host_name
+
+    mode = xhttp.get("mode") or settings.get("mode") or "auto"
+    settings["mode"] = mode
+
+    return {
+        "path": path,
+        "host": host_name,
+        "mode": mode,
+        "settings": settings,
+    }
+
+
 def vless_uri(host, host_address, inbound_name, inbound, secrets, fingerprint, profile_name=None):
     uuid = secret_value(secrets, inbound.get("uuidFile"), f"{host}.{inbound_name}")
     label = profile_name or f"{host}-{inbound_name}"
@@ -60,6 +86,14 @@ def vless_uri(host, host_address, inbound_name, inbound, secrets, fingerprint, p
     flow = inbound.get("flow")
     if flow:
         query["flow"] = flow
+
+    if inbound.get("transport") == "xhttp":
+        xhttp = xhttp_profile_settings(host, inbound_name, inbound, secrets)
+        if xhttp["path"]:
+            query["path"] = xhttp["path"]
+        query["mode"] = xhttp["mode"]
+        if xhttp["host"]:
+            query["host"] = xhttp["host"]
 
     reality = inbound.get("reality") or {}
     if reality.get("enable"):
@@ -119,6 +153,8 @@ def xray_profile_entries(host, host_address, secrets, args):
                 "security": "reality" if reality.get("enable") else "none",
                 "uri": vless_uri(host, host_address, name, inbound, secrets, args.fingerprint, args.name),
             }
+            if inbound.get("transport") == "xhttp":
+                entry["xhttp"] = xhttp_profile_settings(host, name, inbound, secrets)
             if reality.get("enable"):
                 server_names = reality.get("serverNames") or []
                 short_ids = reality.get("shortIds") or []
@@ -287,6 +323,12 @@ def print_profile_text(host, address, entries, *, uri_only=False):
                 print(f"UUID: {entry['uuid']}")
                 if entry.get("flow"):
                     print(f"Flow: {entry['flow']}")
+                xhttp = entry.get("xhttp")
+                if xhttp:
+                    print(f"xHTTP path: {xhttp.get('path') or '-'}")
+                    print(f"xHTTP mode: {xhttp.get('mode') or '-'}")
+                    if xhttp.get("host"):
+                        print(f"xHTTP host: {xhttp.get('host')}")
                 reality = entry.get("reality")
                 if reality:
                     print(f"Reality dest: {reality.get('dest')}")
