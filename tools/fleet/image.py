@@ -22,7 +22,7 @@ from builder import (
 )
 from common import repo_path, run
 from orchestrator import RunContext, Stage, StageRunner, make_context
-from remote_job import cancel_remote_job, job_remote_dir, make_job_id, start_remote_job, verify_remote_artifact, wait_remote_job
+from remote_job import job_remote_dir, make_job_id, start_remote_job, verify_remote_artifact, wait_remote_job
 
 
 # ---------------------------------------------------------------------------
@@ -55,9 +55,10 @@ def _stage_remote_build(ctx: RunContext) -> None:
             + " /etc/sops/age/key.txt"
         )
 
-    out_dir = f"{remote_root}/disko-{host}"
-    artifact_path = f"{out_dir}/main.raw"
+    out_dir = ctx.data["out_dir"]
+    artifact_path = ctx.data["artifact_path"]
     job_id = make_job_id("image", host)
+    ctx.data["job_id"] = job_id
 
     inner = (
         f"cd {shlex.quote(remote_root + '/' + inventory_name)}; "
@@ -72,8 +73,6 @@ def _stage_remote_build(ctx: RunContext) -> None:
     )
 
     start_remote_job(builder, job_id, inner, artifact_path=artifact_path)
-    ctx.data["job_id"] = job_id
-    ctx.data["artifact_path"] = artifact_path
 
     status = wait_remote_job(builder, job_id, poll_interval=30)
     if not status.succeeded:
@@ -148,6 +147,8 @@ def cmd_image(args, config):
     # Non-KVM remote build — stage-based with structured job monitoring.
     ctx = make_context("image", args.host, args, config)
     ctx.data["builder"] = builder
+    ctx.data["out_dir"] = f"{builder['remote_root']}/disko-{args.host}"
+    ctx.data["artifact_path"] = f"{ctx.data['out_dir']}/main.raw"
 
     stages = [
         Stage(name="sync", description="sync worktree to builder", run=_stage_sync, retryable=True),
@@ -170,6 +171,7 @@ def cmd_image(args, config):
     runner.run_pipeline(
         stages,
         restart=getattr(args, "restart", False),
+        resume=getattr(args, "resume", False) or getattr(args, "from_stage", None) is not None,
         from_stage=getattr(args, "from_stage", None),
         stop_after=getattr(args, "stop_after", None),
     )

@@ -96,6 +96,7 @@ def cmd_install(args, config):
     runner.run_pipeline(
         stages,
         restart=getattr(args, "restart", False),
+        resume=getattr(args, "resume", False) or getattr(args, "from_stage", None) is not None,
         from_stage=getattr(args, "from_stage", None),
         stop_after=getattr(args, "stop_after", None),
     )

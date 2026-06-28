@@ -499,6 +499,18 @@ def _build_infect_stages(ctx: RunContext) -> list[Stage]:
         wait_ssh_up(user, target_host, get_port(), timeout=int(args.timeout), poll_interval=5)
 
     def stage_deploy_remote(ctx):
+        resume_argv = ["deploy", args.host, "--builder", builder["name"]]
+        for flag, key in (
+            ("--port", "port"),
+            ("--ssh-key", "ssh_key"),
+            ("--ssh-config", "ssh_config"),
+            ("--remote-root", "remote_root"),
+            ("--remote-nix", "remote_nix"),
+            ("--memory", "memory"),
+        ):
+            value = builder.get(key)
+            if value not in (None, ""):
+                resume_argv.extend([flag, str(value)])
         deploy_args = argparse.Namespace(
             target=args.host,
             builder=builder["name"],
@@ -514,8 +526,10 @@ def _build_infect_stages(ctx: RunContext) -> list[Stage]:
             interactive=False,
             retry=0,
             restart=False,
+            resume=False,
             from_stage=None,
             stop_after=None,
+            resume_argv=resume_argv,
         )
         cmd_deploy(deploy_args, config)
 
@@ -584,4 +598,5 @@ def cmd_infect(args, config):
     runner.run_pipeline(
         selected,
         restart=getattr(args, "restart", False),
+        resume=getattr(args, "resume", False) or args.stage != "probe",
     )

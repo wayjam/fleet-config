@@ -137,20 +137,41 @@ def clear_all_markers(ctx: RunContext) -> None:
             marker.unlink()
 
 
+def _remove_option(argv: list[str], option: str, *, takes_value: bool = True) -> list[str]:
+    result = []
+    skip_next = False
+    for item in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if item == option:
+            skip_next = takes_value
+            continue
+        if item.startswith(option + "="):
+            continue
+        result.append(item)
+    return result
+
+
 def resume_hint(ctx: RunContext, stages: list[Stage], failed_stage: str) -> str:
     """Return a ready-to-paste command to resume from *failed_stage*."""
-    from_stage = f"--from-stage {failed_stage}" if hasattr(ctx.args, "from_stage") else ""
-    # Build a generic resume hint based on the command.
-    parts = ["nix", "run", ".#fleet", "--", ctx.command]
-    if ctx.target:
-        parts.append(ctx.target)
-    # Include the most useful resume flag if the command supports it.
-    if hasattr(ctx.args, "from_stage") and ctx.args.from_stage is None:
-        parts.extend(["--from-stage", failed_stage])
+    argv = list(getattr(ctx.args, "resume_argv", None) or sys.argv[1:])
+    if not argv:
+        argv = [ctx.command]
+        if ctx.target:
+            argv.append(ctx.target)
+
+    argv = _remove_option(argv, "--resume", takes_value=False)
+    if hasattr(ctx.args, "from_stage"):
+        argv = _remove_option(argv, "--from-stage")
+        argv.extend(["--resume", "--from-stage", failed_stage])
     elif hasattr(ctx.args, "stage"):
-        parts.extend(["--stage", failed_stage])
-    if getattr(ctx.args, "builder", ""):
-        parts.extend(["--builder", ctx.args.builder])
+        argv = _remove_option(argv, "--stage")
+        argv.extend(["--resume", "--stage", failed_stage])
+    else:
+        argv.append("--resume")
+
+    parts = ["nix", "run", ".#fleet", "--", *argv]
     return "Resume with:\n  " + " ".join(shlex.quote(p) for p in parts)
 
 
@@ -213,15 +234,26 @@ class StageRunner:
     def __init__(self, ctx: RunContext):
         self.ctx = ctx
 
-    def run_pipeline(self, stages: list[Stage], *, restart: bool = False, from_stage: str | None = None, stop_after: str | None = None) -> None:
+    def run_pipeline(
+        self,
+        stages: list[Stage],
+        *,
+        restart: bool = False,
+        resume: bool = False,
+        from_stage: str | None = None,
+        stop_after: str | None = None,
+    ) -> None:
         """Execute *stages* in order.
 
         - ``restart``: clear all existing markers before starting.
-        - ``from_stage``: skip stages before this one (does not clear markers).
+        - ``resume``: reuse existing markers; by default every invocation starts fresh.
+        - ``from_stage``: start the active slice at this stage.
         - ``stop_after``: stop after this stage completes.
         """
         ctx = self.ctx
         if restart:
+            clear_all_markers(ctx)
+        elif not resume:
             clear_all_markers(ctx)
 
         # Determine the slice to execute.
@@ -423,6 +455,7 @@ def add_orchestration_options(parser: argparse.ArgumentParser, *, skip_stage_opt
     ex.add_argument("--non-interactive", action="store_true", help="never prompt; fail with resume hint")
     group.add_argument("--retry", type=int, default=0, help="auto-retries per retryable stage (default 0)")
     group.add_argument("--restart", action="store_true", help="clear all stage markers before running")
+    group.add_argument("--resume", action="store_true", help="reuse stage markers from an earlier interrupted run")
     if not skip_stage_options:
         group.add_argument("--from-stage", default=None, help="resume from this stage (skip earlier ones)")
         group.add_argument("--stop-after", default=None, help="stop after this stage completes")

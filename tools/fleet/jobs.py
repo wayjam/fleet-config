@@ -1,24 +1,20 @@
 """`fleet jobs` — manage remote builder jobs (list / status / log / cancel / cleanup)."""
 
-import shlex
 import sys
 
-from builder import apply_builder_overrides, builder_config, ssh_args
-from common import capture, die
+from builder import apply_builder_overrides, builder_config
 from remote_job import (
     cancel_remote_job,
     cleanup_remote_jobs,
+    fetch_job_log_tail,
     job_remote_dir,
     list_remote_jobs_status,
     poll_remote_job,
-    fetch_job_log_tail,
 )
 
 
 def _get_builder(args, config):
-    if not args.builder:
-        die("--builder is required for jobs commands")
-    return apply_builder_overrides(builder_config(config, args.builder), args)
+    return apply_builder_overrides(builder_config(config, args.builder or None), args)
 
 
 def cmd_jobs(args, config):

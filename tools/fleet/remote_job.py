@@ -47,7 +47,7 @@ class RemoteJobStatus:
 
     @property
     def done(self) -> bool:
-        return self.state in ("succeeded", "failed")
+        return self.state in ("succeeded", "failed", "canceled")
 
     @property
     def succeeded(self) -> bool:
@@ -233,6 +233,16 @@ def list_remote_jobs_status(builder: dict) -> list[tuple[str, str, int | None]]:
     return jobs
 
 
+def _print_log_tail(builder: dict, job_id: str, which: str, *, lines: int, prefix: str) -> str:
+    log = fetch_job_log_tail(builder, job_id, which=which, lines=lines).rstrip()
+    if not log:
+        return ""
+    print(f"[fleet] {prefix} ({which}, last {lines} lines):", file=sys.stderr)
+    for line in log.splitlines():
+        print(f"  | {line}", file=sys.stderr)
+    return log
+
+
 def wait_remote_job(builder: dict, job_id: str, *, poll_interval: int = 30, timeout: int | None = None) -> RemoteJobStatus:
     """Poll *job_id* until it finishes or *timeout* is reached.
 
@@ -240,6 +250,7 @@ def wait_remote_job(builder: dict, job_id: str, *, poll_interval: int = 30, time
     rather than raw pid checks.
     """
     deadline = time.time() + timeout if timeout else None
+    last_stderr_tail = ""
     while True:
         status = poll_remote_job(builder, job_id)
         if status.done:
@@ -247,9 +258,20 @@ def wait_remote_job(builder: dict, job_id: str, *, poll_interval: int = 30, time
             print(f"[fleet] remote job '{job_id}' {status.state}{elapsed_msg}.", file=sys.stderr)
             if status.artifact_size is not None:
                 print(f"[fleet] artifact: {status.artifact_path} ({status.artifact_size} bytes)", file=sys.stderr)
+            if not status.succeeded:
+                _print_log_tail(builder, job_id, "stderr", lines=80, prefix="remote job failed")
+                _print_log_tail(builder, job_id, "stdout", lines=40, prefix="remote job failed")
             return status
         print(f"[fleet] remote job '{job_id}' still running ...", file=sys.stderr)
+        stderr_tail = fetch_job_log_tail(builder, job_id, which="stderr", lines=20).rstrip()
+        if stderr_tail and stderr_tail != last_stderr_tail:
+            last_stderr_tail = stderr_tail
+            print(f"[fleet] remote job '{job_id}' recent stderr:", file=sys.stderr)
+            for line in stderr_tail.splitlines():
+                print(f"  | {line}", file=sys.stderr)
         if deadline and time.time() >= deadline:
+            _print_log_tail(builder, job_id, "stderr", lines=80, prefix="remote job timed out")
+            _print_log_tail(builder, job_id, "stdout", lines=40, prefix="remote job timed out")
             die(f"timed out waiting for remote job '{job_id}'")
         time.sleep(poll_interval)
 
@@ -279,7 +301,10 @@ echo "artifact verified: {artifact_path}"
 echo "size: $size bytes"
 echo "sha256: $sha"
 """
-    capture([*ssh_args(builder), check_script])
+    output = capture([*ssh_args(builder), check_script])
+    if output.strip():
+        for line in output.splitlines():
+            print(f"[fleet] {line}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
