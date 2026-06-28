@@ -16,12 +16,7 @@ if __name__ == "__main__":
     try:
         main()
     except subprocess.CalledProcessError as exc:
-        # Print a brief hint for multi-stage command failures.
-        cmd = getattr(getattr(exc, "cmd", None), "__iter__", lambda: [])()
-        hint = ""
-        if cmd and len(cmd) > 2 and "fleet" in str(cmd[0]):
-            hint = " — use --from-stage to resume or --retry to auto-retry"
-        print(f"error: command exited {exc.returncode}{hint}", file=sys.stderr)
+        print(f"error: command exited {exc.returncode}", file=sys.stderr)
         sys.exit(exc.returncode)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
