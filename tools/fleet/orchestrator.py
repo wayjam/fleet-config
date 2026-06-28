@@ -41,6 +41,7 @@ class RunContext:
     interactive: bool
     retry: int             # max retries per stage (0 = no retry)
     log_dir: Path          # directory for local log capture
+    interrupt_policy: InterruptPolicy | None = None  # override all stages
     # mutable bag for stages to share data across the pipeline
     data: dict = field(default_factory=dict)
 
@@ -56,9 +57,13 @@ class Stage:
     retryable: bool = True      # may be auto-retried (also subject to --retry)
     skippable: bool = False     # may be skipped in interactive mode
     destructive: bool = False   # destructive: only retry after explicit confirm
+    cleanup: Callable[[RunContext, str], None] | None = None  # (ctx, reason)
+    interrupt_policy: InterruptPolicy = "prompt"  # default Ctrl+C behavior
 
 
 FailureAction = Literal["retry", "skip", "abort", "continue"]
+InterruptAction = Literal["detach", "cancel", "kill-clean", "abort"]
+InterruptPolicy = Literal["prompt", "detach", "cancel", "abort"]
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +274,7 @@ class StageRunner:
                 print(f"[fleet] {ctx.command}: stage '{stage.name}' succeeded.", file=sys.stderr)
                 return
             except KeyboardInterrupt:
-                print(f"\n[fleet] interrupted during stage '{stage.name}'.", file=sys.stderr)
-                print(resume_hint(ctx, [], stage.name), file=sys.stderr)
+                self._handle_interrupt(stage)
                 raise
             except Exception as exc:
                 # Destructive stages are never auto-retried.
@@ -309,6 +313,97 @@ class StageRunner:
                 print(resume_hint(ctx, [], stage.name), file=sys.stderr)
                 die(f"stage '{stage.name}' failed after {attempt} attempt(s): {exc}")
 
+    # -----------------------------------------------------------------------
+    # Interrupt handling
+    # -----------------------------------------------------------------------
+
+    def _handle_interrupt(self, stage: Stage) -> None:
+        """Called when Ctrl+C is received during *stage*."""
+        ctx = self.ctx
+        print(f"\n[fleet] interrupted during stage '{stage.name}'.", file=sys.stderr)
+
+        # Run stage cleanup hook if defined.
+        if stage.cleanup is not None:
+            try:
+                stage.cleanup(ctx, "interrupt")
+            except Exception as exc:
+                print(f"[fleet] cleanup error: {exc}", file=sys.stderr)
+
+        # Determine effective policy: ctx override > stage default.
+        policy: InterruptPolicy = ctx.interrupt_policy or stage.interrupt_policy
+
+        # Non-interactive or non-TTY: detach remote jobs, print resume hint.
+        if policy == "prompt" and not ctx.interactive:
+            policy = "detach" if "job_id" in ctx.data else "abort"
+
+        if policy == "prompt":
+            action = _interrupt_prompt(ctx, stage)
+        else:
+            action = policy
+
+        _execute_interrupt_action(ctx, stage, action)
+
+
+# ---------------------------------------------------------------------------
+# Interrupt prompt and action execution
+# ---------------------------------------------------------------------------
+
+
+def _interrupt_prompt(ctx: RunContext, stage: Stage) -> InterruptAction:
+    """Prompt user for an interrupt action in TTY mode."""
+    has_remote_job = "job_id" in ctx.data
+
+    options = ["(a)bort"]
+    if has_remote_job:
+        options = ["(d)etach", "(c)ancel", "(k)ill-clean"] + options
+    options.append("(l)og")
+
+    prompt = f"[fleet] Choose: {' '.join(options)} > "
+    while True:
+        try:
+            answer = input(prompt).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            # Second Ctrl+C = detach for remote, abort for local.
+            return "detach" if has_remote_job else "abort"
+
+        if answer in ("d", "detach") and has_remote_job:
+            return "detach"
+        if answer in ("c", "cancel") and has_remote_job:
+            return "cancel"
+        if answer in ("k", "kill-clean") and has_remote_job:
+            return "kill-clean"
+        if answer in ("a", "abort"):
+            return "abort"
+        if answer in ("l", "log"):
+            if has_remote_job and "builder" in ctx.data:
+                from remote_job import fetch_job_log_tail
+                log = fetch_job_log_tail(ctx.data["builder"], ctx.data["job_id"], lines=30)
+                for line in log.splitlines():
+                    print(f"  | {line}", file=sys.stderr)
+            else:
+                _show_recent_log(ctx, stage)
+            continue
+        print(f"  invalid choice: {answer}", file=sys.stderr)
+
+
+def _execute_interrupt_action(ctx: RunContext, stage: Stage, action: InterruptAction) -> None:
+    """Execute the chosen interrupt *action*."""
+    if action == "detach":
+        if "job_id" in ctx.data:
+            print(f"[fleet] remote job '{ctx.data['job_id']}' detached — still running on builder.", file=sys.stderr)
+            print(f"[fleet] check:   fleet jobs status {ctx.data['job_id']} --builder {getattr(ctx.args, 'builder', '')}", file=sys.stderr)
+            print(f"[fleet] cancel:  fleet jobs cancel {ctx.data['job_id']} --builder {getattr(ctx.args, 'builder', '')}", file=sys.stderr)
+        print(resume_hint(ctx, [], stage.name), file=sys.stderr)
+
+    elif action in ("cancel", "kill-clean"):
+        if "job_id" in ctx.data and "builder" in ctx.data:
+            from remote_job import cancel_remote_job
+            cancel_remote_job(ctx.data["builder"], ctx.data["job_id"], force=(action == "kill-clean"))
+        print(resume_hint(ctx, [], stage.name), file=sys.stderr)
+
+    elif action == "abort":
+        print(resume_hint(ctx, [], stage.name), file=sys.stderr)
+
 
 # ---------------------------------------------------------------------------
 # Common orchestration CLI helpers
@@ -332,6 +427,12 @@ def add_orchestration_options(parser: argparse.ArgumentParser, *, skip_stage_opt
         group.add_argument("--from-stage", default=None, help="resume from this stage (skip earlier ones)")
         group.add_argument("--stop-after", default=None, help="stop after this stage completes")
     group.add_argument("--log-dir", default=None, help="directory for local logs (default .fleet/logs/...)")
+    group.add_argument(
+        "--interrupt-policy",
+        choices=("prompt", "detach", "cancel", "abort"),
+        default=None,
+        help="Ctrl+C behavior: prompt (TTY default), detach remote job, cancel it, or abort",
+    )
 
 
 def make_context(command: str, target: str, args: argparse.Namespace, config: dict) -> RunContext:
@@ -353,4 +454,5 @@ def make_context(command: str, target: str, args: argparse.Namespace, config: di
         interactive=interactive,
         retry=getattr(args, "retry", 0),
         log_dir=ldir,
+        interrupt_policy=getattr(args, "interrupt_policy", None),
     )

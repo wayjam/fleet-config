@@ -70,6 +70,10 @@ ports host:
 profile host *args:
   nix run .#fleet -- profile {{host}} {{args}}
 
+# Manage remote builder jobs — `just jobs list|status|log|cancel|cleanup --builder <x> [args...]`
+jobs *args:
+  nix run .#fleet -- jobs {{args}}
+
 # Generate secrets — `just secret uuid | password | hex | age | age-file <n> | wireguard | ssh <n> | xray-reality | proxy`
 secret +args:
   nix run .#fleet -- secret {{args}}

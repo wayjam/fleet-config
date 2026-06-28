@@ -1,8 +1,11 @@
 """Shared helpers: config loading, subprocess wrappers, small utilities."""
 
+import os
 import shlex
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -84,14 +87,68 @@ def remote_repo_path(config, value, builder):
     return str(Path(builder["remote_root"]) / inventory_name / rel)
 
 
+def _kill_process_group(pid: int, sig: int) -> None:
+    """Send *sig* to the process group of *pid*."""
+    try:
+        pgid = os.getpgid(pid)
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _terminate_subprocess(proc: subprocess.Popen) -> None:
+    """Escalating termination: SIGINT → SIGTERM (5s) → SIGKILL (3s)."""
+    _kill_process_group(proc.pid, signal.SIGINT)
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    _kill_process_group(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=3)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    _kill_process_group(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
 def run(argv, *, env=None, cwd=None):
+    """Run *argv* with check=True; on Ctrl+C, escalate-kill the child group."""
     printable = " ".join(shlex.quote(str(a)) for a in argv)
     print(f"+ {printable}", file=sys.stderr)
-    subprocess.run([str(a) for a in argv], env=env, cwd=cwd, check=True)
+    proc = subprocess.Popen(
+        [str(a) for a in argv],
+        env=env, cwd=cwd,
+        start_new_session=True,
+    )
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        _terminate_subprocess(proc)
+        raise
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, argv)
 
 
 def capture(argv, *, env=None, cwd=None):
-    return subprocess.check_output([str(a) for a in argv], env=env, cwd=cwd, text=True)
+    """Capture stdout of *argv*; on Ctrl+C, escalate-kill the child group."""
+    proc = subprocess.Popen(
+        [str(a) for a in argv],
+        env=env, cwd=cwd,
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, _ = proc.communicate()
+    except KeyboardInterrupt:
+        _terminate_subprocess(proc)
+        raise
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, argv, output=stdout)
+    return stdout
 
 
 def die(message, code=2):

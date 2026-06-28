@@ -31,7 +31,7 @@ from builder import ssh_args
 from common import capture, die
 
 
-JobState = Literal["running", "succeeded", "failed"]
+JobState = Literal["running", "succeeded", "failed", "canceled"]
 
 
 @dataclass
@@ -94,6 +94,8 @@ fi
     return f"""set -euo pipefail
 job_dir={shlex.quote(job_dir)}
 mkdir -p "$job_dir"
+echo $$ > "$job_dir/pid"
+echo $$ > "$job_dir/pgid"
 date -u +%FT%TZ > "$job_dir/started-at"
 printf '%s' 'running' > "$job_dir/state"
 
@@ -129,14 +131,19 @@ exit "$exit_code"
 def start_remote_job(builder: dict, job_id: str, inner_script: str, *, artifact_path: str | None = None) -> str:
     """Launch *inner_script* as a backgrounded job on the builder.
 
-    Returns the remote job directory path.  The job runs under ``nohup`` so it
-    survives SSH disconnects.
+    Returns the remote job directory path.  The job runs under ``setsid`` so it
+    survives SSH disconnects and can be killed by process group.
     """
     job_dir = job_remote_dir(builder, job_id)
     runner = _remote_runner_script(job_dir, inner_script, artifact_path)
 
-    # Launch in background via nohup; the launch SSH returns immediately.
-    launch_script = f"nohup bash -c {shlex.quote(runner)} </dev/null >/dev/null 2>&1 & echo $!"
+    # Launch via setsid (new session = own process group).
+    # The runner writes its own PID to $job_dir/pid; we wait for that file.
+    launch_script = (
+        f"setsid bash -c {shlex.quote(runner)} </dev/null >/dev/null 2>&1 & "
+        f"for i in $(seq 1 10); do [ -f {shlex.quote(job_dir + '/pid')} ] && break; sleep 0.1; done; "
+        f"cat {shlex.quote(job_dir + '/pid')} 2>/dev/null || echo unknown"
+    )
     pid = capture([*ssh_args(builder), launch_script]).strip()
     print(f"[fleet] remote job '{job_id}' started on builder (pid={pid})", file=sys.stderr)
     print(f"[fleet] job dir: {job_dir}", file=sys.stderr)
@@ -233,3 +240,60 @@ echo "size: $size bytes"
 echo "sha256: $sha"
 """
     capture([*ssh_args(builder), check_script])
+
+
+# ---------------------------------------------------------------------------
+# Cancel / list / cleanup
+# ---------------------------------------------------------------------------
+
+
+def cancel_remote_job(builder: dict, job_id: str, *, force: bool = False) -> bool:
+    """Terminate a remote job by process group.
+
+    Sends SIGTERM (or SIGKILL if *force*), waits, then marks state as
+    ``canceled``.  Returns ``True`` if the job was terminated.
+    """
+    job_dir = job_remote_dir(builder, job_id)
+
+    pgid_raw = _read_remote_file(builder, f"{job_dir}/pgid", "")
+    if not pgid_raw or not pgid_raw.lstrip("-").isdigit():
+        print(f"[fleet] no pgid file for job '{job_id}'", file=sys.stderr)
+        return False
+
+    sig = "KILL" if force else "TERM"
+    capture([*ssh_args(builder), f"kill -{sig} -{pgid_raw} 2>/dev/null || true"])
+
+    if not force:
+        time.sleep(3)
+        still_running = _read_remote_file(builder, f"{job_dir}/state", "")
+        if still_running == "running":
+            capture([*ssh_args(builder), f"kill -KILL -{pgid_raw} 2>/dev/null || true"])
+            time.sleep(1)
+
+    capture([*ssh_args(builder), f"printf '%s' 'canceled' > {shlex.quote(job_dir + '/state')}"])
+    capture([*ssh_args(builder), f"date -u +%FT%TZ > {shlex.quote(job_dir + '/finished-at')}"])
+    print(f"[fleet] job '{job_id}' canceled.", file=sys.stderr)
+    return True
+
+
+def list_remote_jobs(builder: dict) -> list[str]:
+    """Return a list of job IDs on the builder."""
+    jobs_root = f"{builder['remote_root']}/.fleet/jobs"
+    result = capture([*ssh_args(builder), f"ls -1 {shlex.quote(jobs_root)} 2>/dev/null || true"])
+    return [line.strip() for line in result.splitlines() if line.strip()]
+
+
+def cleanup_remote_jobs(builder: dict, *, older_than_days: int = 7) -> int:
+    """Remove job directories older than *older_than_days*.
+
+    Returns the number of directories removed.
+    """
+    jobs_root = f"{builder['remote_root']}/.fleet/jobs"
+    script = (
+        f"find {shlex.quote(jobs_root)} -maxdepth 1 -mindepth 1 -type d "
+        f"-mtime +{int(older_than_days)} -print -exec rm -rf {{}} + 2>/dev/null || true"
+    )
+    result = capture([*ssh_args(builder), script])
+    count = len([l for l in result.splitlines() if l.strip()])
+    print(f"[fleet] cleaned up {count} job(s) older than {older_than_days} day(s).", file=sys.stderr)
+    return count

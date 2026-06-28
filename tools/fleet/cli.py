@@ -12,6 +12,7 @@ from deploy import cmd_deploy, cmd_deploy_all
 from image import cmd_download_image, cmd_image
 from infect import INFECT_STAGES, cmd_infect
 from install import cmd_install
+from jobs import cmd_jobs
 from justfile import cmd_justfile_render
 from lxc import cmd_lxc_switch
 from misc import cmd_check, cmd_eval, cmd_fmt
@@ -151,6 +152,42 @@ def build_parser():
     p.add_argument("--comment", default="operator@example.invalid")
     p.set_defaults(func=cmd_secret)
     secret_sub.add_parser("proxy").set_defaults(func=cmd_secret)
+
+    # -- jobs -----------------------------------------------------------------
+    p = sub.add_parser("jobs")
+    jobs_sub = p.add_subparsers(dest="jobs_command", required=True)
+
+    p = jobs_sub.add_parser("list")
+    p.add_argument("--builder", default="")
+    add_builder_options(p)
+    p.set_defaults(func=cmd_jobs)
+
+    p = jobs_sub.add_parser("status")
+    p.add_argument("job_id")
+    p.add_argument("--builder", default="")
+    add_builder_options(p)
+    p.set_defaults(func=cmd_jobs)
+
+    p = jobs_sub.add_parser("log")
+    p.add_argument("job_id")
+    p.add_argument("--builder", default="")
+    p.add_argument("--which", choices=("stdout", "stderr"), default="stderr")
+    p.add_argument("--lines", type=int, default=50)
+    add_builder_options(p)
+    p.set_defaults(func=cmd_jobs)
+
+    p = jobs_sub.add_parser("cancel")
+    p.add_argument("job_id")
+    p.add_argument("--builder", default="")
+    p.add_argument("--force", action="store_true")
+    add_builder_options(p)
+    p.set_defaults(func=cmd_jobs)
+
+    p = jobs_sub.add_parser("cleanup")
+    p.add_argument("--builder", default="")
+    p.add_argument("--older-than", type=int, default=7)
+    add_builder_options(p)
+    p.set_defaults(func=cmd_jobs)
 
     # -- justfile render ------------------------------------------------------
     justfile = sub.add_parser("justfile")

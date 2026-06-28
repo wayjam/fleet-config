@@ -22,7 +22,7 @@ from builder import (
 )
 from common import repo_path, run
 from orchestrator import RunContext, Stage, StageRunner, make_context
-from remote_job import job_remote_dir, make_job_id, start_remote_job, verify_remote_artifact, wait_remote_job
+from remote_job import cancel_remote_job, job_remote_dir, make_job_id, start_remote_job, verify_remote_artifact, wait_remote_job
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +90,16 @@ def _stage_verify_artifact(ctx: RunContext) -> None:
     verify_remote_artifact(builder, artifact_path)
 
 
+def _cleanup_remote_build(ctx: RunContext, reason: str) -> None:
+    """Cleanup hook for remote-build stage — does NOT auto-cancel by default.
+
+    The actual cancel/detach decision is made by the interrupt handler in
+    the orchestrator.  This hook only runs when explicitly invoked.
+    """
+    # No-op: cancellation is handled by _execute_interrupt_action.
+    pass
+
+
 def _stage_download(ctx: RunContext) -> None:
     """Download the remote-built image via SCP."""
     builder = ctx.data["builder"]
@@ -147,6 +157,7 @@ def cmd_image(args, config):
             run=_stage_remote_build,
             retryable=False,
             destructive=True,
+            interrupt_policy="prompt",
         ),
         Stage(
             name="verify-artifact",
